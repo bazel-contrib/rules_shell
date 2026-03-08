@@ -104,7 +104,7 @@ The list of input files.
             flags = ["SKIP_CONSTRAINTS_OVERRIDE"],
         ),
         "deps": attr.label_list(
-            allow_rules = ["sh_library"],
+            providers = [ShInfo],
             doc = """
 The list of "library" targets to be aggregated into this target.
 See general comments about <code>deps</code>

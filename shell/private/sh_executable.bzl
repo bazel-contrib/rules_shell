@@ -14,7 +14,7 @@
 
 """Common code for sh_binary and sh_test rules."""
 
-load(":providers.bzl", "ShInfo")
+load(":providers.bzl", "ShBinaryInfo", "ShInfo")
 
 visibility(["//shell"])
 
@@ -119,7 +119,7 @@ exec "$(rlocation "{src}")" "$@"
         default_info,
         instrumented_files_info,
         run_environment_info,
-        ShInfo(),
+        ShBinaryInfo(),
     ]
 
 _WINDOWS_EXECUTABLE_EXTENSIONS = [
@@ -203,7 +203,7 @@ The file containing the shell script.
                 flags = ["SKIP_CONSTRAINTS_OVERRIDE"],
             ),
             "deps": attr.label_list(
-                allow_rules = ["sh_library"],
+                providers = [ShInfo],
                 doc = """
 The list of "library" targets to be aggregated into this target.
 See general comments about <code>deps</code>

@@ -12,16 +12,10 @@
 # See the License for the specific language governing permissions and
 # limitations under the License.
 
-"""rules_shell provider definitions."""
+"""ShInfo provider definition."""
+
+load("//shell/private:providers.bzl", _ShBinaryInfo = "ShBinaryInfo")
 
 visibility("public")
 
-ShInfo = provider(
-    doc = "A provider for shell library rules.",
-    fields = {},
-)
-
-ShBinaryInfo = provider(
-    doc = "A provider for shell binary rules.",
-    fields = {},
-)
+ShBinaryInfo = _ShBinaryInfo
