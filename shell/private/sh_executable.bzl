@@ -14,6 +14,8 @@
 
 """Common code for sh_binary and sh_test rules."""
 
+load(":providers.bzl", "ShInfo")
+
 visibility(["//shell"])
 
 _SH_TOOLCHAIN_TYPE = Label("//shell:toolchain_type")
@@ -117,6 +119,7 @@ exec "$(rlocation "{src}")" "$@"
         default_info,
         instrumented_files_info,
         run_environment_info,
+        ShInfo(),
     ]
 
 _WINDOWS_EXECUTABLE_EXTENSIONS = [
@@ -228,5 +231,6 @@ most build rules</a>.
         toolchains = [
             config_common.toolchain_type(_SH_TOOLCHAIN_TYPE, mandatory = False),
         ],
+        provides = [ShInfo],
         **kwargs
     )

@@ -14,6 +14,8 @@
 
 """sh_library rule definition."""
 
+load(":providers.bzl", "ShInfo")
+
 # For doc generation only.
 visibility("public")
 
@@ -41,6 +43,7 @@ def _sh_library_impl(ctx):
             runfiles = runfiles,
         ),
         instrumented_files_info,
+        ShInfo(),
     ]
 
 sh_library = rule(
@@ -115,4 +118,5 @@ most build rules</a>.
 """,
         ),
     },
+    provides = [ShInfo],
 )
