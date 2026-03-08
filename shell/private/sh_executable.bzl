@@ -231,6 +231,6 @@ most build rules</a>.
         toolchains = [
             config_common.toolchain_type(_SH_TOOLCHAIN_TYPE, mandatory = False),
         ],
-        provides = [ShInfo],
+        provides = [ShBinaryInfo],
         **kwargs
     )
