@@ -14,6 +14,8 @@
 
 """Common code for sh_binary and sh_test rules."""
 
+load(":providers.bzl", "ShBinaryInfo", "ShInfo")
+
 visibility(["//shell"])
 
 _SH_TOOLCHAIN_TYPE = Label("//shell:toolchain_type")
@@ -23,6 +25,9 @@ def _to_rlocation_path(ctx, file):
         return file.short_path[3:]
     else:
         return ctx.workspace_name + "/" + file.short_path
+
+# A memory optimization for an empty provider
+_SHARED_PROVIDER = ShBinaryInfo()
 
 def _sh_executable_impl(ctx):
     if len(ctx.files.srcs) != 1:
@@ -117,6 +122,7 @@ exec "$(rlocation "{src}")" "$@"
         default_info,
         instrumented_files_info,
         run_environment_info,
+        _SHARED_PROVIDER,
     ]
 
 _WINDOWS_EXECUTABLE_EXTENSIONS = [
@@ -200,7 +206,7 @@ The file containing the shell script.
                 flags = ["SKIP_CONSTRAINTS_OVERRIDE"],
             ),
             "deps": attr.label_list(
-                allow_rules = ["sh_library"],
+                providers = [ShInfo],
                 doc = """
 The list of "library" targets to be aggregated into this target.
 See general comments about <code>deps</code>
@@ -228,5 +234,6 @@ most build rules</a>.
         toolchains = [
             config_common.toolchain_type(_SH_TOOLCHAIN_TYPE, mandatory = False),
         ],
+        provides = [ShBinaryInfo],
         **kwargs
     )

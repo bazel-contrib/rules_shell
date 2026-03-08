@@ -14,8 +14,13 @@
 
 """sh_library rule definition."""
 
+load(":providers.bzl", "ShInfo")
+
 # For doc generation only.
 visibility("public")
+
+# A memory optimization for an empty provider
+_SHARED_PROVIDER = ShInfo()
 
 def _sh_library_impl(ctx):
     transitive_files = []
@@ -41,6 +46,7 @@ def _sh_library_impl(ctx):
             runfiles = runfiles,
         ),
         instrumented_files_info,
+        _SHARED_PROVIDER,
     ]
 
 sh_library = rule(
@@ -101,7 +107,7 @@ The list of input files.
             flags = ["SKIP_CONSTRAINTS_OVERRIDE"],
         ),
         "deps": attr.label_list(
-            allow_rules = ["sh_library"],
+            providers = [ShInfo],
             doc = """
 The list of "library" targets to be aggregated into this target.
 See general comments about <code>deps</code>
@@ -115,4 +121,5 @@ most build rules</a>.
 """,
         ),
     },
+    provides = [ShInfo],
 )
