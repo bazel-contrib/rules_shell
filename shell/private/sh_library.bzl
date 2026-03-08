@@ -19,6 +19,9 @@ load(":providers.bzl", "ShInfo")
 # For doc generation only.
 visibility("public")
 
+# A memory optimization for an empty provider
+_SHARED_PROVIDER = ShInfo()
+
 def _sh_library_impl(ctx):
     transitive_files = []
     for target in ctx.attr.srcs:
@@ -43,7 +46,7 @@ def _sh_library_impl(ctx):
             runfiles = runfiles,
         ),
         instrumented_files_info,
-        ShInfo(),
+        _SHARED_PROVIDER,
     ]
 
 sh_library = rule(

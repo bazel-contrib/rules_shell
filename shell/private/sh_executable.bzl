@@ -26,6 +26,9 @@ def _to_rlocation_path(ctx, file):
     else:
         return ctx.workspace_name + "/" + file.short_path
 
+# A memory optimization for an empty provider
+_SHARED_PROVIDER = ShBinaryInfo()
+
 def _sh_executable_impl(ctx):
     if len(ctx.files.srcs) != 1:
         fail("you must specify exactly one file in 'srcs'", attr = "srcs")
@@ -119,7 +122,7 @@ exec "$(rlocation "{src}")" "$@"
         default_info,
         instrumented_files_info,
         run_environment_info,
-        ShBinaryInfo(),
+        _SHARED_PROVIDER,
     ]
 
 _WINDOWS_EXECUTABLE_EXTENSIONS = [
