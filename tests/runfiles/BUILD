@@ -4,7 +4,7 @@ load("//shell:sh_test.bzl", "sh_test")
 sh_test(
     name = "runfiles_bash_test",
     srcs = ["runfiles_test.bash"],
-    deps = ["//shell/runfiles:runfiles_bash"],
+    deps = ["//shell/runfiles:runfiles_impl"],
 )
 
 sh_test(

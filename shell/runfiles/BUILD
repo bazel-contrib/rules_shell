@@ -9,24 +9,23 @@ config_setting(
 alias(
     name = "runfiles",
     actual = select({
-        ":use_shell_runfiles": ":runfiles_sh",
-        "//conditions:default": ":runfiles_bash" if ROOT_SYMLINKS_SUPPORTED else "@bazel_tools//tools/bash/runfiles",
+        ":use_shell_runfiles": ":runfiles_sh_impl",
+        "//conditions:default": ":runfiles_impl" if ROOT_SYMLINKS_SUPPORTED else "@bazel_tools//tools/bash/runfiles",
     }),
     visibility = ["//visibility:public"],
 )
 
-# Backward compatible name
-alias(
+sh_library(
     name = "runfiles_impl",
-    actual = ":runfiles_bash",
+    data = [":runfiles_at_legacy_location"],
     tags = ["manual"],
     visibility = ["//visibility:public"],
+    deps = [":runfiles_bash"],
 )
 
 sh_library(
     name = "runfiles_bash",
     srcs = ["runfiles.bash"],
-    data = [":runfiles_at_legacy_location"],
     tags = ["manual"],
     visibility = ["//visibility:public"],
 )
@@ -40,9 +39,16 @@ root_symlinks(
 )
 
 sh_library(
+    name = "runfiles_sh_impl",
+    data = [":runfiles_sh_at_legacy_location"],
+    tags = ["manual"],
+    visibility = ["//visibility:public"],
+    deps = [":runfiles_sh"],
+)
+
+sh_library(
     name = "runfiles_sh",
     srcs = ["runfiles.sh"],
-    data = [":runfiles_sh_at_legacy_location"],
     tags = ["manual"],
     visibility = ["//visibility:public"],
 )
