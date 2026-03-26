@@ -29,3 +29,8 @@ function get_greeting() {
     greeting_path=$(rlocation "rules_shell_tests/greeting.txt")
     cat "${greeting_path}"
 }
+
+function get_tool_greeting() {
+    greeting_path=$(rlocation "rules_shell_tests/greeting_tool.txt")
+    cat "${greeting_path}"
+}

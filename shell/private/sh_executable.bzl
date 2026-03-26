@@ -37,6 +37,8 @@ def _sh_executable_impl(ctx):
     direct_files = [src]
     transitive_files = []
     runfiles = ctx.runfiles(collect_default = True)
+    for target in ctx.attr.tools:
+        runfiles = runfiles.merge(target[DefaultInfo].default_runfiles)
 
     entrypoint = ctx.actions.declare_file(ctx.label.name)
     targets_windows = ctx.target_platform_has_constraint(ctx.attr._windows_constraint[platform_common.ConstraintValueInfo])
@@ -103,14 +105,16 @@ exec "$(rlocation "{src}")" "$@"
     instrumented_files_info = coverage_common.instrumented_files_info(
         ctx,
         source_attributes = ["srcs"],
-        dependency_attributes = ["deps", "_runfiles_dep", "data"],
+        dependency_attributes = ["deps", "_runfiles_dep", "data", "tools"],
     )
+
+    locations = ctx.attr.data + ctx.attr.tools
 
     run_environment_info = RunEnvironmentInfo(
         environment = {
             key: ctx.expand_make_variables(
                 "env",
-                ctx.expand_location(value, ctx.attr.data, short_paths = True),
+                ctx.expand_location(value, locations, short_paths = True),
                 {},
             )
             for key, value in ctx.attr.env.items()
@@ -224,6 +228,15 @@ most build rules</a>.
             ),
             "env": attr.string_dict(),
             "env_inherit": attr.string_list(),
+            "tools": attr.label_list(
+                cfg = config.exec(),
+                allow_files = True,
+                doc = """
+The list of tool dependencies, similar to genrule's equivalent. You can use
+this to ensure that any helper binaries your scripts need are built in the exec
+configuration.
+""",
+            ),
             "use_bash_launcher": attr.bool(
                 doc = "Use a bash launcher initializing the runfiles library",
             ),
