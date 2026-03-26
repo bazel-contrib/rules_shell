@@ -52,35 +52,29 @@ def _sh_library_impl(ctx):
 sh_library = rule(
     _sh_library_impl,
     doc = """
-<p>
-  The main use for this rule is to aggregate together a logical
-  "library" consisting of related scripts&mdash;programs in an
-  interpreted language that does not require compilation or linking,
-  such as the Bourne shell&mdash;and any data those programs need at
-  run-time. Such "libraries" can then be used from
-  the <code>data</code> attribute of one or
-  more <code>sh_binary</code> rules.
-</p>
+The main use for this rule is to aggregate together a logical
+"library" consisting of related scripts -- programs in an
+interpreted language that does not require compilation or linking,
+such as the Bourne shell -- and any data those programs need at
+run-time. Such "libraries" can then be used from
+the `data` attribute of one or
+more `sh_binary` rules.
 
-<p>
-  You can use the <a href="${link filegroup}"><code>filegroup</code></a> rule to aggregate data
-  files.
-</p>
+You can use the [filegroup](https://bazel.build/reference/be/general#filegroup)
+rule to aggregate data files.
 
-<p>
-  In interpreted programming languages, there's not always a clear
-  distinction between "code" and "data": after all, the program is
-  just "data" from the interpreter's point of view. For this reason
-  this rule has three attributes which are all essentially equivalent:
-  <code>srcs</code>, <code>deps</code> and <code>data</code>.
-  The current implementation does not distinguish between the elements of these lists.
-  All three attributes accept rules, source files and generated files.
-  It is however good practice to use the attributes for their usual purpose (as with other rules).
-</p>
+In interpreted programming languages, there's not always a clear
+distinction between "code" and "data": after all, the program is
+just "data" from the interpreter's point of view. For this reason
+this rule has three attributes which are all essentially equivalent:
+`srcs`, `deps` and `data`.
+The current implementation does not distinguish between the elements of these lists.
+All three attributes accept rules, source files and generated files.
+It is however good practice to use the attributes for their usual purpose (as with other rules).
 
-<h4 id="sh_library_examples">Examples</h4>
+#### Examples
 
-<pre class="code">
+```starlark
 sh_library(
     name = "foo",
     data = [
@@ -88,18 +82,17 @@ sh_library(
         ":deploy_foo",  # another sh_binary with srcs
     ],
 )
-</pre>
+```
 """,
     attrs = {
         "srcs": attr.label_list(
             allow_files = True,
             doc = """
 The list of input files.
-<p>
-  This attribute should be used to list shell script source files that belong to
-  this library. Scripts can load other scripts using the shell's <code>source</code>
-  or <code>.</code> command.
-</p>
+
+This attribute should be used to list shell script source files that belong to
+this library. Scripts can load other scripts using the shell's `source`
+or `.` command.
 """,
         ),
         "data": attr.label_list(
@@ -110,14 +103,12 @@ The list of input files.
             providers = [ShInfo],
             doc = """
 The list of "library" targets to be aggregated into this target.
-See general comments about <code>deps</code>
-at <a href="${link common-definitions#typical.deps}">Typical attributes defined by
-most build rules</a>.
-<p>
-  This attribute should be used to list other <code>sh_library</code> rules that provide
-  interpreted program source code depended on by the code in <code>srcs</code>. The files
-  provided by these rules will be present among the <code>runfiles</code> of this target.
-</p>
+See general comments about `deps` at
+[Typical attributes defined by most build rules](https://bazel.build/reference/be/common-definitions#typical.deps).
+
+This attribute should be used to list other `sh_library` rules that provide
+interpreted program source code depended on by the code in `srcs`. The files
+provided by these rules will be present among the `runfiles` of this target.
 """,
         ),
     },

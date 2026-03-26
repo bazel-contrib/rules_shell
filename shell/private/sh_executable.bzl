@@ -193,12 +193,11 @@ def make_sh_executable_rule(doc, extra_attrs = {}, **kwargs):
                 allow_files = True,
                 doc = """
 The file containing the shell script.
-<p>
-  This attribute must be a singleton list, whose element is the shell script.
-  This script must be executable, and may be a source file or a generated file.
-  All other files required at runtime (whether scripts or data) belong in the
-  <code>data</code> attribute.
-</p>
+
+This attribute must be a singleton list, whose element is the shell script.
+This script must be executable, and may be a source file or a generated file.
+All other files required at runtime (whether scripts or data) belong in the
+`data` attribute.
 """,
             ),
             "data": attr.label_list(
@@ -209,14 +208,13 @@ The file containing the shell script.
                 providers = [ShInfo],
                 doc = """
 The list of "library" targets to be aggregated into this target.
-See general comments about <code>deps</code>
-at <a href="${link common-definitions#typical.deps}">Typical attributes defined by
-most build rules</a>.
-<p>
-  This attribute should be used to list other <code>sh_library</code> rules that provide
-  interpreted program source code depended on by the code in <code>srcs</code>. The files
-  provided by these rules will be present among the <code>runfiles</code> of this target.
-</p>
+See general comments about `deps` at
+[Typical attributes defined by most build rules](https://bazel.build/reference/be/common-definitions#typical.deps)
+
+This attribute should be used to list other `sh_library` rules that provide
+interpreted program source code depended on by the code in `srcs`. The files
+provided by these rules will be present among the `runfiles` of this target.
+
 """,
             ),
             "_runfiles_dep": attr.label(
