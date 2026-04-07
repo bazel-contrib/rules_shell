@@ -3,13 +3,17 @@ buildifier: latest
 
 matrix:
   platform:
+    - rockylinux8
+    - debian10
     - ubuntu2004
+    - ubuntu2004_arm64
     - macos
+    - macos_arm64
     - windows
   bazel:
-    - 6.x
     - 7.x
     - 8.x
+    - 9.x
 
 tasks:
   test_module_bzlmod:
@@ -45,5 +49,49 @@ tasks:
     platform: ${{ platform }}
     build_targets:
       - "//..."
+    test_targets:
+      - "//..."
+
+  test_module_bzlmod_shell_runfiles:
+    name: "Test module (Bzlmod + Shell Runfiles)"
+    working_directory: "tests/bcr"
+    bazel: ${{ bazel }}
+    platform: ${{ platform }}
+    build_flags:
+      - "--enable_bzlmod"
+      - "--@rules_shell//shell/settings:experimental_use_shell_runfiles=True"
+    build_targets:
+      - "//..."
+    test_flags:
+      - "--enable_bzlmod"
+      - "--@rules_shell//shell/settings:experimental_use_shell_runfiles=True"
+    test_targets:
+      - "//..."
+  test_module_workspace_shell_runfiles:
+    name: "Test module (WORKSPACE + Shell Runfiles)"
+    working_directory: "tests/bcr"
+    bazel: ${{ bazel }}
+    platform: ${{ platform }}
+    build_flags:
+      - "--enable_bzlmod"
+      - "--@rules_shell//shell/settings:experimental_use_shell_runfiles=True"
+    build_targets:
+      - "//..."
+    test_flags:
+      - "--enable_bzlmod"
+      - "--@rules_shell//shell/settings:experimental_use_shell_runfiles=True"
+    test_targets:
+      - "//..."
+  test_module_head_shell_runfiles:
+    name: "Test module (Bazel@HEAD, Bzlmod + Shell Runfiles)"
+    working_directory: "tests/bcr"
+    bazel: last_green
+    platform: ${{ platform }}
+    build_flags:
+      - "--@rules_shell//shell/settings:experimental_use_shell_runfiles=True"
+    build_targets:
+      - "//..."
+    test_flags:
+      - "--@rules_shell//shell/settings:experimental_use_shell_runfiles=True"
     test_targets:
       - "//..."
