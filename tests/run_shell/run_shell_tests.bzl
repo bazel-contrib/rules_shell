@@ -12,6 +12,8 @@ load(
     "invalid_mnemonic",
     "lazy_args",
     "long_command",
+    "medium_command",
+    "two_long_commands",
 )
 
 def _test_command_string(name):
@@ -153,11 +155,18 @@ def _test_long_command_uses_helper_script(name):
     util.helper_target(
         long_command,
         name = name + "_subject",
+        # Force a Unix execution platform so that the longer Unix command length limit applies.
+        exec_compatible_with = ["@platforms//os:linux"],
     )
     analysis_test(
         name = name,
         impl = _test_long_command_uses_helper_script_impl,
         target = name + "_subject",
+        config_settings = {
+            "//command_line_option:extra_execution_platforms": [
+                "//tests/run_shell:linux_exec",
+            ],
+        },
     )
 
 def _test_long_command_uses_helper_script_impl(env, target):
@@ -171,6 +180,81 @@ def _test_long_command_uses_helper_script_impl(env, target):
         matching.file_basename_contains(".run_shell_0.sh"),
     )
 
+def _test_windows_threshold(name):
+    util.helper_target(
+        medium_command,
+        name = name + "_subject",
+        # Force a Windows execution platform so that the shorter Windows command length limit applies.
+        exec_compatible_with = ["@platforms//os:windows"],
+    )
+    analysis_test(
+        name = name,
+        impl = _test_windows_threshold_impl,
+        target = name + "_subject",
+        config_settings = {
+            "//command_line_option:extra_execution_platforms": [
+                "//tests/run_shell:windows_exec",
+            ],
+        },
+    )
+
+def _test_windows_threshold_impl(env, target):
+    helper = env.expect.that_target(target).action_generating(
+        "{package}/{name}.run_shell_0.sh",
+    )
+    helper.content().contains("echo zzz999 ;")
+
+def _test_medium_command_does_not_use_helper_script(name):
+    util.helper_target(
+        medium_command,
+        name = name + "_subject",
+        # Force a Linux execution platform so that the larger non-Windows command length limit applies.
+        exec_compatible_with = ["@platforms//os:linux"],
+    )
+    analysis_test(
+        name = name,
+        impl = _test_medium_command_does_not_use_helper_script_impl,
+        target = name + "_subject",
+        config_settings = {
+            "//command_line_option:extra_execution_platforms": [
+                "//tests/run_shell:linux_exec",
+            ],
+        },
+    )
+
+def _test_medium_command_does_not_use_helper_script_impl(env, target):
+    # On Linux the command length limit is 64000, so a ~14000 char command is
+    # passed inline instead of being spilled into a helper script.
+    action = env.expect.that_target(target).action_named("MediumMnemonic")
+    action.argv().contains_predicate(matching.str_matches("*echo zzz999*"))
+    action.inputs().not_contains_predicate(
+        matching.file_basename_contains(".run_shell_0.sh"),
+    )
+
+def _test_two_run_shell_calls(name):
+    util.helper_target(
+        two_long_commands,
+        name = name + "_subject",
+    )
+    analysis_test(
+        name = name,
+        impl = _test_two_run_shell_calls_impl,
+        target = name + "_subject",
+    )
+
+def _test_two_run_shell_calls_impl(env, target):
+    # Each run_shell call in a rule gets its own helper script, numbered by an
+    # incrementing per-rule counter (run_shell_0.sh, run_shell_1.sh, ...).
+    helper0 = env.expect.that_target(target).action_generating(
+        "{package}/{name}.run_shell_0.sh",
+    )
+    helper0.content().contains("echo xxx6999 ;")
+
+    helper1 = env.expect.that_target(target).action_generating(
+        "{package}/{name}.run_shell_1.sh",
+    )
+    helper1.content().contains("echo yyy6999 ;")
+
 def run_shell_test_suite(name):
     test_suite(
         name = name,
@@ -183,5 +267,8 @@ def run_shell_test_suite(name):
             _test_invalid_mnemonic_rejected,
             _test_lazy_args,
             _test_long_command_uses_helper_script,
+            _test_windows_threshold,
+            _test_medium_command_does_not_use_helper_script,
+            _test_two_run_shell_calls,
         ],
     )

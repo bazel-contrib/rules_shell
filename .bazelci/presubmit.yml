@@ -1,49 +1,64 @@
 ---
-buildifier: latest
+# Avoid https://github.com/bazelbuild/buildtools/commit/4006b543a694f6cf77c2d8cc188c5f53f3bac1d9
+buildifier: 8.2.1
 
 matrix:
   platform:
     - ubuntu2004
     - macos
     - windows
-  bazel:
-    - 6.x
-    - 7.x
-    - 8.x
+  legacy_bazel:
+    - 7.*
+    - 8.*
+  modern_bazel:
+    - 9.*
+    - last_green
 
 tasks:
-  test_module_bzlmod:
-    name: "Test module (Bzlmod)"
+  test_module_bzlmod_legacy:
+    name: "Test module (${{legacy_bazel}}, Bzlmod)"
     working_directory: "tests/bcr"
-    bazel: ${{ bazel }}
+    bazel: ${{ legacy_bazel }}
     platform: ${{ platform }}
     build_flags:
       - "--enable_bzlmod"
+      - "--noenable_workspace"
     build_targets:
       - "//..."
     test_flags:
       - "--enable_bzlmod"
+      - "--noenable_workspace"
     test_targets:
       - "//..."
   test_module_workspace:
-    name: "Test module (WORKSPACE)"
+    name: "Test module (${{legacy_bazel}}, WORKSPACE)"
     working_directory: "tests/bcr"
-    bazel: ${{ bazel }}
+    bazel: ${{ legacy_bazel }}
     platform: ${{ platform }}
     build_flags:
-      - "--enable_bzlmod"
+      - "--noenable_bzlmod"
+      - "--enable_workspace"
     build_targets:
       - "//..."
     test_flags:
-      - "--enable_bzlmod"
+      - "--noenable_bzlmod"
+      - "--enable_workspace"
     test_targets:
       - "//..."
-  test_module_head:
-    name: "Test module (Bazel@HEAD, Bzlmod)"
+  test_module_modern:
+    name: "Test module (${{modern_bazel}}, Bzlmod)"
     working_directory: "tests/bcr"
-    bazel: last_green
+    bazel: ${{ modern_bazel }}
     platform: ${{ platform }}
     build_targets:
       - "//..."
     test_targets:
       - "//..."
+  tests:
+    name: "Tests (${{modern_bazel}})"
+    bazel: ${{ modern_bazel }}
+    platform: ${{ platform }}
+    build_targets:
+      - "//tests/..."
+    test_targets:
+      - "//tests/..."

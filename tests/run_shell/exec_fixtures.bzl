@@ -44,11 +44,12 @@ def _run_shell_long_output_impl(ctx):
     out = ctx.actions.declare_file(ctx.label.name + ".out")
 
     # A command well above the 64,000 char (8,000 on Windows) threshold at which
-    # run_shell spills the command into a helper script. All but the last
-    # statement are no-ops, so the output is deterministic. The output path is
-    # embedded directly because positional arguments are not forwarded into the
-    # helper script.
-    command = "( %s ; echo done ) > %s" % (" ; ".join(["true"] * 20000), out.path)
+    # run_shell spills the command into a helper script. The length comes from a
+    # trailing comment rather than many statements: a deeply nested command list
+    # (e.g. tens of thousands of `;`-separated commands) overflows the stack of
+    # the smaller-stacked bash on Windows. The output path is embedded directly
+    # because positional arguments are not forwarded into the helper script.
+    command = "echo done > %s #%s" % (out.path, "x" * 70000)
     ctx.actions.run_shell(
         outputs = [out],
         command = command,

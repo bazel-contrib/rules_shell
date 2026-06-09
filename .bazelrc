@@ -1,0 +1,2 @@
+common --check_direct_dependencies=off
+common --keep_going

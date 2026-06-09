@@ -112,3 +112,52 @@ long_command = rule(
     implementation = _long_command_impl,
     attrs = {},
 )
+
+def _medium_command_impl(ctx):
+    out = ctx.actions.declare_file(ctx.label.name + ".out")
+
+    # A command between the Windows (8000) and non-Windows (64000) command
+    # length limits. It is spilled into a helper script only on Windows.
+    medium_command = "( %s ; ) > $1" % " ; ".join(
+        ["echo zzz%d" % i for i in range(0, 1000)],
+    )
+    ctx.actions.run_shell(
+        outputs = [out],
+        command = medium_command,
+        mnemonic = "MediumMnemonic",
+        arguments = [out.path],
+    )
+    return [DefaultInfo(files = depset([out]))]
+
+medium_command = rule(
+    implementation = _medium_command_impl,
+    attrs = {},
+)
+
+def _two_long_commands_impl(ctx):
+    out1 = ctx.actions.declare_file(ctx.label.name + "1.out")
+    out2 = ctx.actions.declare_file(ctx.label.name + "2.out")
+    command1 = "( %s ; ) > $1" % " ; ".join(
+        ["echo xxx%d" % i for i in range(0, 7000)],
+    )
+    command2 = "( %s ; ) > $1" % " ; ".join(
+        ["echo yyy%d" % i for i in range(0, 7000)],
+    )
+    ctx.actions.run_shell(
+        outputs = [out1],
+        command = command1,
+        mnemonic = "Mnemonic1",
+        arguments = [out1.path],
+    )
+    ctx.actions.run_shell(
+        outputs = [out2],
+        command = command2,
+        mnemonic = "Mnemonic2",
+        arguments = [out2.path],
+    )
+    return [DefaultInfo(files = depset([out1, out2]))]
+
+two_long_commands = rule(
+    implementation = _two_long_commands_impl,
+    attrs = {},
+)

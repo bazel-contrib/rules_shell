@@ -9,6 +9,16 @@ load(":run_shell_tests.bzl", "run_shell_test_suite")
 
 run_shell_test_suite(name = "run_shell_tests")
 
+platform(
+    name = "linux_exec",
+    constraint_values = ["@platforms//os:linux"],
+)
+
+platform(
+    name = "windows_exec",
+    constraint_values = ["@platforms//os:windows"],
+)
+
 run_shell_output(
     name = "basic_output",
     command = "echo 'hello world' > $1",
