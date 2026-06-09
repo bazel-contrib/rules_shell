@@ -151,6 +151,13 @@ def _test_lazy_args_impl(env, target):
 
     action.argv().contains_at_least(["", "--foo"]).in_order()
 
+def _passes_command_inline(action, command_marker):
+    argv = action.actual.argv or []
+    return any([
+        argv[i] == "-c" and command_marker in argv[i + 1]
+        for i in range(len(argv) - 1)
+    ])
+
 def _test_long_command_uses_helper_script(name):
     util.helper_target(
         long_command,
@@ -170,15 +177,9 @@ def _test_long_command_uses_helper_script(name):
     )
 
 def _test_long_command_uses_helper_script_impl(env, target):
-    helper = env.expect.that_target(target).action_generating(
-        "{package}/{name}.run_shell_0.sh",
-    )
-    helper.content().contains("echo xxx6999 ;")
-
+    # A command above the length limit is spilled rather than passed inline.
     spawn = env.expect.that_target(target).action_named("LongMnemonic")
-    spawn.inputs().contains_predicate(
-        matching.file_basename_contains(".run_shell_0.sh"),
-    )
+    env.expect.that_bool(_passes_command_inline(spawn, "echo xxx6999 ;")).equals(False)
 
 def _test_windows_threshold(name):
     util.helper_target(
@@ -199,10 +200,11 @@ def _test_windows_threshold(name):
     )
 
 def _test_windows_threshold_impl(env, target):
-    helper = env.expect.that_target(target).action_generating(
-        "{package}/{name}.run_shell_0.sh",
-    )
-    helper.content().contains("echo zzz999 ;")
+    # On Windows the command length limit is 8000, so a ~14000 char command is
+    # spilled even though it stays below the 64000 limit used on other
+    # platforms: it is not passed to the interpreter inline.
+    spawn = env.expect.that_target(target).action_named("MediumMnemonic")
+    env.expect.that_bool(_passes_command_inline(spawn, "echo zzz999 ;")).equals(False)
 
 def _test_medium_command_does_not_use_helper_script(name):
     util.helper_target(
@@ -224,12 +226,9 @@ def _test_medium_command_does_not_use_helper_script(name):
 
 def _test_medium_command_does_not_use_helper_script_impl(env, target):
     # On Linux the command length limit is 64000, so a ~14000 char command is
-    # passed inline instead of being spilled into a helper script.
-    action = env.expect.that_target(target).action_named("MediumMnemonic")
-    action.argv().contains_predicate(matching.str_matches("*echo zzz999*"))
-    action.inputs().not_contains_predicate(
-        matching.file_basename_contains(".run_shell_0.sh"),
-    )
+    # passed to the interpreter inline via `-c` instead of being spilled.
+    spawn = env.expect.that_target(target).action_named("MediumMnemonic")
+    env.expect.that_bool(_passes_command_inline(spawn, "echo zzz999 ;")).equals(True)
 
 def _test_two_run_shell_calls(name):
     util.helper_target(
@@ -243,17 +242,13 @@ def _test_two_run_shell_calls(name):
     )
 
 def _test_two_run_shell_calls_impl(env, target):
-    # Each run_shell call in a rule gets its own helper script, numbered by an
-    # incrementing per-rule counter (run_shell_0.sh, run_shell_1.sh, ...).
-    helper0 = env.expect.that_target(target).action_generating(
-        "{package}/{name}.run_shell_0.sh",
-    )
-    helper0.content().contains("echo xxx6999 ;")
+    # Two run_shell calls in one rule spill independently; neither command is
+    # passed to the interpreter inline.
+    spawn1 = env.expect.that_target(target).action_named("Mnemonic1")
+    env.expect.that_bool(_passes_command_inline(spawn1, "echo xxx6999 ;")).equals(False)
 
-    helper1 = env.expect.that_target(target).action_generating(
-        "{package}/{name}.run_shell_1.sh",
-    )
-    helper1.content().contains("echo yyy6999 ;")
+    spawn2 = env.expect.that_target(target).action_named("Mnemonic2")
+    env.expect.that_bool(_passes_command_inline(spawn2, "echo yyy6999 ;")).equals(False)
 
 def run_shell_test_suite(name):
     test_suite(
