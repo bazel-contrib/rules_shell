@@ -117,14 +117,14 @@ def _run_shell_long_output_impl(ctx):
     # run_shell spills the command into a helper script. The length comes from a
     # trailing comment rather than many statements: a deeply nested command list
     # (e.g. tens of thousands of `;`-separated commands) overflows the stack of
-    # the smaller-stacked bash on Windows. The output path is embedded directly
-    # to keep the command self-contained.
-    command = "echo done > %s #%s" % (out.path, "x" * 70000)
+    # the smaller-stacked bash on Windows.
+    command = "echo done > $1 #%s" % ("x" * 70000)
     run_shell(
         ctx,
         outputs = [out],
         command = command,
         mnemonic = "RunShellLongOutput",
+        arguments = [out.path],
     )
     return [DefaultInfo(files = depset([out]))]
 
