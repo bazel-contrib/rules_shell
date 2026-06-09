@@ -9,7 +9,7 @@ load("@bazel_skylib//:bzl_library.bzl", "bzl_library")
 # Every toolchain registered for this type has the following attributes:
 # - `path`: The path to the shell interpreter for the target platform.
 #
-# Other attribute may be present but are considered implementation details of
+# Other attributes may be present but are considered implementation details of
 # Bazel's sh_* rules.
 #
 # Toolchains registered for this type should have target constraints.
@@ -28,7 +28,7 @@ toolchain_type(
 # - `path`: The path to the shell interpreter for the execution platform.
 # - `max_command_length`: The maximum command length before spilling to a helper script.
 #
-# Other attribute may be present but are considered implementation details of
+# Other attributes may be present but are considered implementation details of
 # the `run_shell` implementation.
 #
 # Toolchains registered for this type should have exec constraints.

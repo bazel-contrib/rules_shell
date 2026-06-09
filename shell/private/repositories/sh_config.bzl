@@ -33,7 +33,7 @@ sh_exec_toolchain(
     name = "{os}_sh_exec",
     path = {sh_path},
     max_command_length = 64000,
-)
+) if {sh_path} else None
 """
 
 _WINDOWS_SH_TOOLCHAINS_TEMPLATE = """
@@ -87,7 +87,7 @@ def _sh_config_impl(repository_ctx):
         if is_host:
             # This toolchain was first added before optional toolchains were
             # available, so instead of not registering a toolchain if we
-            # couldn't find the shell, we register a runtim toolchain with an
+            # couldn't find the shell, we register a runtime toolchain with an
             # empty path. The exec toolchain is new and not registered if no
             # shell is found.
             sh_path = _detect_local_shell_path(repository_ctx) or ""

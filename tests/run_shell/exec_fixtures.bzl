@@ -64,7 +64,8 @@ echo "args=($*)" > "$OUT"
     if ctx.attr.forward_arguments:
         command += " \"$@\""
 
-    ctx.actions.run_shell(
+    run_shell(
+        ctx,
         outputs = [out],
         tools = [script],
         command = command,
@@ -79,6 +80,7 @@ run_shell_script_args = rule(
     attrs = {
         "forward_arguments": attr.bool(),
     },
+    toolchains = [SH_EXEC_TOOLCHAIN_TYPE],
 )
 
 def _run_shell_helper_script_args_impl(ctx):
@@ -90,7 +92,8 @@ def _run_shell_helper_script_args_impl(ctx):
         # written to a helper script without otherwise changing its behavior.
         command += " #" + ("x" * 70000)
 
-    ctx.actions.run_shell(
+    run_shell(
+        ctx,
         outputs = [out],
         command = command,
         arguments = ["the_argument"],
@@ -104,6 +107,7 @@ run_shell_helper_script_args = rule(
     attrs = {
         "long": attr.bool(),
     },
+    toolchains = [SH_EXEC_TOOLCHAIN_TYPE],
 )
 
 def _run_shell_long_output_impl(ctx):
@@ -114,7 +118,7 @@ def _run_shell_long_output_impl(ctx):
     # trailing comment rather than many statements: a deeply nested command list
     # (e.g. tens of thousands of `;`-separated commands) overflows the stack of
     # the smaller-stacked bash on Windows. The output path is embedded directly
-    # because positional arguments are not forwarded into the helper script.
+    # to keep the command self-contained.
     command = "echo done > %s #%s" % (out.path, "x" * 70000)
     run_shell(
         ctx,

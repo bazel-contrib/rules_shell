@@ -44,8 +44,9 @@ def run_shell(
     """Creates an action that runs a shell command.
 
     Args:
-        ctx: The rule context. The calling rule must depend on the shell
-            toolchain type, e.g. via `toolchains = ["//shell:toolchain_type"]`.
+        ctx: The rule context. The calling rule must depend on the shell exec
+            toolchain type via `toolchains = [SH_EXEC_TOOLCHAIN_TYPE]` (loaded
+            from `@rules_shell//shell/toolchains:sh_exec_toolchain.bzl`).
         command: Shell command to execute. Unlike the native
             `ctx.actions.run_shell`, only a string is accepted; passing a
             sequence of strings is deprecated and rejected. The command is
@@ -83,6 +84,10 @@ def run_shell(
         execution_requirements: Information for scheduling the action.
         exec_group: The execution group for the action. The shell exec toolchain
             will be obtained from this group.
+        shadowed_action: An action whose inputs and environment are made
+            available to this action in addition to its own.
+        resource_set: A callback returning a dictionary of resource estimates
+            (e.g. memory, CPU) for scheduling the action locally.
     """
     if type(command) != type(""):
         fail("'command' must be of type string, got %s" % type(command))

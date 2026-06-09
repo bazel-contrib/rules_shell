@@ -1,3 +1,5 @@
+load("@bazel_skylib//:bzl_library.bzl", "bzl_library")
+
 bzl_library(
     name = "toolchains_bzl",
     srcs = [
