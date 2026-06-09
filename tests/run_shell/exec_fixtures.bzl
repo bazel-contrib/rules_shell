@@ -40,6 +40,68 @@ run_shell_output_with_action_env, _run_shell_output_with_action_env = (
         .build()
 )
 
+def _run_shell_script_args_impl(ctx):
+    out = ctx.actions.declare_file(ctx.label.name + ".out")
+
+    # A script that records its own positional arguments.
+    script = ctx.actions.declare_file(ctx.label.name + "_echo_args.sh")
+    ctx.actions.write(
+        output = script,
+        content = """#!/bin/bash
+set -euo pipefail
+echo "args=($*)" > "$OUT"
+""",
+        is_executable = True,
+    )
+
+    # `arguments` are passed as the positional parameters ($1, $2, ...) of the
+    # command string (with an empty $0), not to a script named within it.
+    command = script.path
+    if ctx.attr.forward_arguments:
+        command += " \"$@\""
+
+    ctx.actions.run_shell(
+        outputs = [out],
+        tools = [script],
+        command = command,
+        arguments = ["a", "b", "c"],
+        env = {"OUT": out.path},
+        mnemonic = "RunShellScriptArgs",
+    )
+    return [DefaultInfo(files = depset([out]))]
+
+run_shell_script_args = rule(
+    implementation = _run_shell_script_args_impl,
+    attrs = {
+        "forward_arguments": attr.bool(),
+    },
+)
+
+def _run_shell_helper_script_args_impl(ctx):
+    out = ctx.actions.declare_file(ctx.label.name + ".out")
+
+    command = 'echo "arg=$1" > "$OUT"'
+    if ctx.attr.long:
+        # Pad past the spill threshold with a trailing comment so the command is
+        # written to a helper script without otherwise changing its behavior.
+        command += " #" + ("x" * 70000)
+
+    ctx.actions.run_shell(
+        outputs = [out],
+        command = command,
+        arguments = ["the_argument"],
+        env = {"OUT": out.path},
+        mnemonic = "RunShellHelperScriptArgs",
+    )
+    return [DefaultInfo(files = depset([out]))]
+
+run_shell_helper_script_args = rule(
+    implementation = _run_shell_helper_script_args_impl,
+    attrs = {
+        "long": attr.bool(),
+    },
+)
+
 def _run_shell_long_output_impl(ctx):
     out = ctx.actions.declare_file(ctx.label.name + ".out")
 

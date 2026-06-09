@@ -1,9 +1,11 @@
 load("@bazel_skylib//rules:diff_test.bzl", "diff_test")
 load(
     ":exec_fixtures.bzl",
+    "run_shell_helper_script_args",
     "run_shell_long_output",
     "run_shell_output",
     "run_shell_output_with_action_env",
+    "run_shell_script_args",
 )
 load(":run_shell_tests.bzl", "run_shell_test_suite")
 
@@ -58,6 +60,60 @@ diff_test(
     size = "small",
     file1 = ":env",
     file2 = "env.golden",
+)
+
+# positional parameters of the command string, not of the script it runs.
+# Codifies https://github.com/bazelbuild/bazel/issues/6391 (working as intended).
+run_shell_script_args(
+    name = "script_args_not_forwarded",
+    forward_arguments = False,
+)
+
+diff_test(
+    name = "script_args_not_forwarded_test",
+    size = "small",
+    file1 = ":script_args_not_forwarded",
+    file2 = "script_args_not_forwarded.golden",
+)
+
+# Explicitly forwarding with "$@" passes `arguments` through to the script.
+run_shell_script_args(
+    name = "script_args_forwarded",
+    forward_arguments = True,
+)
+
+diff_test(
+    name = "script_args_forwarded_test",
+    size = "small",
+    file1 = ":script_args_forwarded",
+    file2 = "script_args_forwarded.golden",
+)
+
+# A command referencing $1 receives `arguments` when it runs inline...
+run_shell_helper_script_args(
+    name = "helper_script_args_inline",
+    long = False,
+)
+
+diff_test(
+    name = "helper_script_args_inline_test",
+    size = "small",
+    file1 = ":helper_script_args_inline",
+    file2 = "helper_script_args_inline.golden",
+)
+
+# ...but the same command spilled into a helper script does not: $1 is empty.
+# Codifies https://github.com/bazelbuild/bazel/issues/29365 (currently open bug).
+run_shell_helper_script_args(
+    name = "helper_script_args_spilled",
+    long = True,
+)
+
+diff_test(
+    name = "helper_script_args_spilled_test",
+    size = "small",
+    file1 = ":helper_script_args_spilled",
+    file2 = "helper_script_args_spilled.golden",
 )
 
 run_shell_long_output(
