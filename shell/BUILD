@@ -11,9 +11,15 @@
 # Toolchains registered for this type should have target constraints.
 
 load("@bazel_skylib//:bzl_library.bzl", "bzl_library")
+load("//shell/private:sh_toolchain_alias.bzl", "sh_toolchain_alias")
 
 toolchain_type(
     name = "toolchain_type",
+    visibility = ["//visibility:public"],
+)
+
+sh_toolchain_alias(
+    name = "current_sh_toolchain",
     visibility = ["//visibility:public"],
 )
 
