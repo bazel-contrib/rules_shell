@@ -14,11 +14,10 @@
 
 """Common code for sh_binary and sh_test rules."""
 
+load("//shell/toolchains:sh_toolchain.bzl", "SH_TOOLCHAIN_TYPE")
 load(":providers.bzl", "ShBinaryInfo", "ShInfo")
 
 visibility(["//shell"])
-
-_SH_TOOLCHAIN_TYPE = Label("//shell:toolchain_type")
 
 def _to_rlocation_path(ctx, file):
     if file.short_path.startswith("../"):
@@ -47,7 +46,7 @@ def _sh_executable_impl(ctx):
             # error.
             shebang = ""
         else:
-            shell = ctx.toolchains[_SH_TOOLCHAIN_TYPE].path
+            shell = ctx.toolchains[SH_TOOLCHAIN_TYPE].path
             shebang = "#!{}".format(shell)
         ctx.actions.write(
             entrypoint,
@@ -159,7 +158,7 @@ def _create_windows_exe_launcher(ctx, sh_toolchain, primary_output):
         outputs = [bash_launcher],
         arguments = [launcher_artifact.path, launch_info, bash_launcher.path],
         use_default_shell_env = True,
-        toolchain = _SH_TOOLCHAIN_TYPE,
+        toolchain = SH_TOOLCHAIN_TYPE,
     )
     return bash_launcher
 
@@ -171,14 +170,14 @@ def _launcher_for_windows(ctx, primary_output, main_file):
             fail("Source file is a Windows executable file, target name extension should match source file extension")
 
     # bazel_tools should always registers a toolchain for Windows, but it may have an empty path.
-    sh_toolchain = ctx.toolchains[_SH_TOOLCHAIN_TYPE]
+    sh_toolchain = ctx.toolchains[SH_TOOLCHAIN_TYPE]
     if not sh_toolchain or not sh_toolchain.path:
         # Let fail print the toolchain type with an apparent repo name.
         fail(
             """No suitable shell toolchain found:
 * if you are running Bazel on Windows, set the BAZEL_SH environment variable to the path of bash.exe
 * if you are running Bazel on a non-Windows platform but are targeting Windows, register an sh_toolchain for the""",
-            _SH_TOOLCHAIN_TYPE,
+            SH_TOOLCHAIN_TYPE,
             "toolchain type",
         )
 
@@ -232,7 +231,7 @@ most build rules</a>.
             ),
         } | extra_attrs,
         toolchains = [
-            config_common.toolchain_type(_SH_TOOLCHAIN_TYPE, mandatory = False),
+            config_common.toolchain_type(SH_TOOLCHAIN_TYPE, mandatory = False),
         ],
         provides = [ShBinaryInfo],
         **kwargs

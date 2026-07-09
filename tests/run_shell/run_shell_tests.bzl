@@ -1,4 +1,4 @@
-"""Analysis tests for `ctx.actions.run_shell`."""
+"""Analysis tests for the `run_shell` function."""
 
 load("@rules_testing//lib:analysis_test.bzl", "analysis_test", "test_suite")
 load("@rules_testing//lib:truth.bzl", "matching")

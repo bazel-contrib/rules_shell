@@ -4,6 +4,7 @@ bzl_library(
     name = "private_bzl",
     srcs = [
         "providers.bzl",
+        "run_shell.bzl",
         "sh_binary.bzl",
         "sh_executable.bzl",
         "sh_library.bzl",

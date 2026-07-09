@@ -23,31 +23,52 @@ _DEFAULT_SHELL_PATHS = {
     "openbsd": "/usr/local/bin/bash",
 }
 
-_UNIX_SH_TOOLCHAIN_TEMPLATE = """
+_UNIX_SH_TOOLCHAINS_TEMPLATE = """
 sh_toolchain(
     name = "{os}_sh",
     path = {sh_path},
 )
+
+sh_exec_toolchain(
+    name = "{os}_sh_exec",
+    path = {sh_path},
+    max_command_length = 64000,
+) if {sh_path} else None
 """
 
-_WINDOWS_SH_TOOLCHAIN_TEMPLATE = """
+_WINDOWS_SH_TOOLCHAINS_TEMPLATE = """
 sh_toolchain(
     name = "{os}_sh",
     path = {sh_path},
     launcher = "@bazel_tools//tools/launcher",
     launcher_maker = "@bazel_tools//tools/launcher:launcher_maker",
 )
+
+sh_exec_toolchain(
+    name = "{os}_sh_exec",
+    path = {sh_path},
+    max_command_length = 8000,
+) if {sh_path} else None
 """
 
-_TOOLCHAIN_TEMPLATE = """
+_TOOLCHAINS_TEMPLATE = """
 toolchain(
     name = "{os}_sh_toolchain",
     toolchain = ":{os}_sh",
-    toolchain_type = "@rules_shell//shell:toolchain_type",
+    toolchain_type = SH_TOOLCHAIN_TYPE,
     target_compatible_with = [
         "@platforms//os:{os}",
     ],
 )
+
+toolchain(
+    name = "{os}_sh_exec_toolchain",
+    toolchain = ":{os}_sh_exec",
+    toolchain_type = SH_EXEC_TOOLCHAIN_TYPE,
+    exec_compatible_with = [
+        "@platforms//os:{os}",
+    ],
+) if {sh_path} else None
 """
 
 def _sh_config_impl(repository_ctx):
@@ -66,23 +87,26 @@ def _sh_config_impl(repository_ctx):
         if is_host:
             # This toolchain was first added before optional toolchains were
             # available, so instead of not registering a toolchain if we
-            # couldn't find the shell, we register a toolchain with an empty
-            # path.
+            # couldn't find the shell, we register a runtime toolchain with an
+            # empty path. The exec toolchain is new and not registered if no
+            # shell is found.
             sh_path = _detect_local_shell_path(repository_ctx) or ""
         else:
             sh_path = default_shell_path
 
-        sh_toolchain_template = _WINDOWS_SH_TOOLCHAIN_TEMPLATE if os == "windows" else _UNIX_SH_TOOLCHAIN_TEMPLATE
+        sh_toolchain_template = _WINDOWS_SH_TOOLCHAINS_TEMPLATE if os == "windows" else _UNIX_SH_TOOLCHAINS_TEMPLATE
         toolchains.append(sh_toolchain_template.format(
             os = os,
             sh_path = repr(sh_path),
         ))
-        toolchains.append(_TOOLCHAIN_TEMPLATE.format(
+        toolchains.append(_TOOLCHAINS_TEMPLATE.format(
             os = os,
+            sh_path = repr(sh_path),
         ))
 
     repository_ctx.file("BUILD", """
-load("@rules_shell//shell/toolchains:sh_toolchain.bzl", "sh_toolchain")
+load("@rules_shell//shell/toolchains:sh_toolchain.bzl", "sh_toolchain", "SH_TOOLCHAIN_TYPE")
+load("@rules_shell//shell/toolchains:sh_exec_toolchain.bzl", "sh_exec_toolchain", "SH_EXEC_TOOLCHAIN_TYPE")
 """ + "\n".join(toolchains))
 
     if hasattr(repository_ctx, "repo_metadata"):

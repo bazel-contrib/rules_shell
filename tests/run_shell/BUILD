@@ -102,8 +102,9 @@ diff_test(
     file2 = "helper_script_args_inline.golden",
 )
 
-# ...but the same command spilled into a helper script does not: $1 is empty.
-# Codifies https://github.com/bazelbuild/bazel/issues/29365 (currently open bug).
+# ...and the same command spilled into a helper script behaves identically:
+# run_shell forwards `arguments` into the helper script, fixing
+# https://github.com/bazelbuild/bazel/issues/29365.
 run_shell_helper_script_args(
     name = "helper_script_args_spilled",
     long = True,

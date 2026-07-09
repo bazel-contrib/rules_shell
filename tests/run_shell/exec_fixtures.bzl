@@ -1,4 +1,4 @@
-"""Rules that execute `ctx.actions.run_shell` and expose the produced output.
+"""Rules that execute the `run_shell` function and expose the produced output.
 
 The single output file of each target is compared against a golden file with
 `diff_test`, which exercises the runtime behavior of `run_shell` (command
@@ -7,10 +7,13 @@ long commands) without a Bazel-in-Bazel integration test.
 """
 
 load("@with_cfg.bzl", "with_cfg")
+load("//shell:run_shell.bzl", "run_shell")
+load("//shell/toolchains:sh_exec_toolchain.bzl", "SH_EXEC_TOOLCHAIN_TYPE")
 
 def _run_shell_output_impl(ctx):
     out = ctx.actions.declare_file(ctx.label.name + ".out")
-    ctx.actions.run_shell(
+    run_shell(
+        ctx,
         outputs = [out],
         command = ctx.attr.command,
         arguments = [out.path] + ctx.attr.extra_arguments,
@@ -30,6 +33,7 @@ run_shell_output = rule(
         "env": attr.string_dict(),
         "use_default_shell_env": attr.bool(),
     },
+    toolchains = [SH_EXEC_TOOLCHAIN_TYPE],
 )
 
 # Same as run_shell_output, but transitions --action_env so that targets can
@@ -60,7 +64,8 @@ echo "args=($*)" > "$OUT"
     if ctx.attr.forward_arguments:
         command += " \"$@\""
 
-    ctx.actions.run_shell(
+    run_shell(
+        ctx,
         outputs = [out],
         tools = [script],
         command = command,
@@ -75,6 +80,7 @@ run_shell_script_args = rule(
     attrs = {
         "forward_arguments": attr.bool(),
     },
+    toolchains = [SH_EXEC_TOOLCHAIN_TYPE],
 )
 
 def _run_shell_helper_script_args_impl(ctx):
@@ -86,7 +92,8 @@ def _run_shell_helper_script_args_impl(ctx):
         # written to a helper script without otherwise changing its behavior.
         command += " #" + ("x" * 70000)
 
-    ctx.actions.run_shell(
+    run_shell(
+        ctx,
         outputs = [out],
         command = command,
         arguments = ["the_argument"],
@@ -100,6 +107,7 @@ run_shell_helper_script_args = rule(
     attrs = {
         "long": attr.bool(),
     },
+    toolchains = [SH_EXEC_TOOLCHAIN_TYPE],
 )
 
 def _run_shell_long_output_impl(ctx):
@@ -109,16 +117,18 @@ def _run_shell_long_output_impl(ctx):
     # run_shell spills the command into a helper script. The length comes from a
     # trailing comment rather than many statements: a deeply nested command list
     # (e.g. tens of thousands of `;`-separated commands) overflows the stack of
-    # the smaller-stacked bash on Windows. The output path is embedded directly
-    # because positional arguments are not forwarded into the helper script.
-    command = "echo done > %s #%s" % (out.path, "x" * 70000)
-    ctx.actions.run_shell(
+    # the smaller-stacked bash on Windows.
+    command = "echo done > $1 #%s" % ("x" * 70000)
+    run_shell(
+        ctx,
         outputs = [out],
         command = command,
         mnemonic = "RunShellLongOutput",
+        arguments = [out.path],
     )
     return [DefaultInfo(files = depset([out]))]
 
 run_shell_long_output = rule(
     implementation = _run_shell_long_output_impl,
+    toolchains = [SH_EXEC_TOOLCHAIN_TYPE],
 )
