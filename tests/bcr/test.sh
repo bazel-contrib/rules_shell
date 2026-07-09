@@ -33,8 +33,13 @@ fi
 
 runfiles_export_envvars
 
+read -r -d '' expected <<EOF || true
+hello from rules_shell
+and the tools
+EOF
+
 greeting=$("${bin_path}")
-if [[ "${greeting}" != "hello from rules_shell" ]]; then
-  echo "Expected 'hello from rules_shell', got '${greeting}'"
+if [[ "${greeting}" != "${expected}" ]]; then
+  printf "Expected '%s', got '%s'\n" "${expected}" "${greeting}"
   exit 1
 fi

@@ -28,3 +28,5 @@ source "${RUNFILES_DIR:-/dev/null}/$f" 2>/dev/null || \
 source "$(rlocation "rules_shell_tests/lib.sh")"
 
 get_greeting
+
+get_tool_greeting
