@@ -27,3 +27,16 @@ bzl_library(
     visibility = ["//visibility:public"],
     deps = ["//shell/private:private_bzl"],
 )
+
+[
+    starlark_doc_extract(
+        name = module + ".doc_extract",
+        src = module + ".bzl",
+        deps = [":rules_bzl"],
+    )
+    for module in [
+        "sh_binary",
+        "sh_library",
+        "sh_test",
+    ]
+]
