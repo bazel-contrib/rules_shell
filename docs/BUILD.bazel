@@ -1,0 +1,63 @@
+load("@stardoc//stardoc:stardoc.bzl", "stardoc")
+
+stardoc(
+    name = "sh_binary",
+    out = "sh_binary.md",
+    input = "//shell:sh_binary.bzl",
+    deps = ["//shell:rules_bzl"],
+)
+
+stardoc(
+    name = "sh_binary_info",
+    out = "sh_binary_info.md",
+    input = "//shell:sh_binary_info.bzl",
+    deps = ["//shell:rules_bzl"],
+)
+
+stardoc(
+    name = "sh_info",
+    out = "sh_info.md",
+    input = "//shell:sh_info.bzl",
+    deps = ["//shell:rules_bzl"],
+)
+
+stardoc(
+    name = "sh_library",
+    out = "sh_library.md",
+    input = "//shell:sh_library.bzl",
+    deps = ["//shell:rules_bzl"],
+)
+
+stardoc(
+    name = "sh_test",
+    out = "sh_test.md",
+    input = "//shell:sh_test.bzl",
+    deps = ["//shell:rules_bzl"],
+)
+
+stardoc(
+    name = "sh_toolchain",
+    out = "sh_toolchain.md",
+    input = "//shell/toolchains:sh_toolchain.bzl",
+    deps = ["//shell/toolchains:toolchains_bzl"],
+)
+
+stardoc(
+    name = "repositories",
+    out = "repositories.md",
+    input = "//shell:repositories.bzl",
+    deps = ["//shell:rules_bzl"],
+)
+
+filegroup(
+    name = "docs",
+    srcs = [
+        ":repositories.md",
+        ":sh_binary.md",
+        ":sh_binary_info.md",
+        ":sh_info.md",
+        ":sh_library.md",
+        ":sh_test.md",
+        ":sh_toolchain.md",
+    ],
+)

@@ -17,13 +17,32 @@ toolchain_type(
     visibility = ["//visibility:public"],
 )
 
-bzl_library(
-    name = "rules_bzl",
-    srcs = [
+exports_files(
+    [
+        "repositories.bzl",
         "sh_binary.bzl",
+        "sh_binary_info.bzl",
+        "sh_info.bzl",
         "sh_library.bzl",
         "sh_test.bzl",
     ],
     visibility = ["//visibility:public"],
-    deps = ["//shell/private:private_bzl"],
+)
+
+bzl_library(
+    name = "rules_bzl",
+    srcs = [
+        "repositories.bzl",
+        "sh_binary.bzl",
+        "sh_binary_info.bzl",
+        "sh_info.bzl",
+        "sh_library.bzl",
+        "sh_test.bzl",
+    ],
+    visibility = ["//visibility:public"],
+    deps = [
+        "//shell/private:private_bzl",
+        "//shell/private/repositories:bazel_tools_bzl",
+        "//shell/private/repositories:repositories_bzl",
+    ],
 )

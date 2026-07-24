@@ -189,19 +189,18 @@ def make_sh_executable_rule(doc, extra_attrs = {}, **kwargs):
         _sh_executable_impl,
         doc = doc,
         attrs = {
-            "srcs": attr.label_list(
-                allow_files = True,
+            "data": attr.label_list(
                 doc = """
-The file containing the shell script.
+Files needed by this rule at runtime. May list file or rule targets. Generally allows any target.
 <p>
-  This attribute must be a singleton list, whose element is the shell script.
-  This script must be executable, and may be a source file or a generated file.
-  All other files required at runtime (whether scripts or data) belong in the
-  <code>data</code> attribute.
+  The <code>runfiles</code> of targets in the <code>data</code> attribute appear in the
+  <code>*.runfiles</code> area of any executable which is output by or has a runtime dependency
+  on this target. This may include data files or binaries used when this target's
+  <code>srcs</code> are executed. See the
+  <a href="https://bazel.build/reference/be/common-definitions#typical.data">data dependencies</a>
+  section for more information about how to depend on and use data files.
 </p>
 """,
-            ),
-            "data": attr.label_list(
                 allow_files = True,
                 flags = ["SKIP_CONSTRAINTS_OVERRIDE"],
             ),
@@ -219,13 +218,46 @@ most build rules</a>.
 </p>
 """,
             ),
-            "_runfiles_dep": attr.label(
-                default = Label("//shell/runfiles"),
+            "env": attr.string_dict(
+                doc = """
+Specifies additional environment variables to set when the target is executed by
+<code>bazel run</code> (for <code>sh_binary</code>) or <code>bazel test</code> (for
+<code>sh_test</code>).
+<p>
+  Values are subject to
+  <a href="https://bazel.build/reference/be/make-variables#predefined_label_variables">$(location)</a>
+  and
+  <a href="https://bazel.build/reference/be/make-variables">"Make variable"</a> substitution.
+</p>
+<p>
+  <em class="harmful">NOTE: The environment variables are not set when you run the target
+  outside of Bazel (for example, by manually executing the binary in <code>bazel-bin/</code>).</em>
+</p>
+""",
             ),
-            "env": attr.string_dict(),
-            "env_inherit": attr.string_list(),
+            "env_inherit": attr.string_list(
+                doc = """
+Specifies additional environment variables to inherit from the external environment when the
+target is executed by <code>bazel test</code>. Has no effect on <code>bazel run</code>.
+""",
+            ),
+            "srcs": attr.label_list(
+                allow_files = True,
+                doc = """
+The file containing the shell script.
+<p>
+  This attribute must be a singleton list, whose element is the shell script.
+  This script must be executable, and may be a source file or a generated file.
+  All other files required at runtime (whether scripts or data) belong in the
+  <code>data</code> attribute.
+</p>
+""",
+            ),
             "use_bash_launcher": attr.bool(
                 doc = "Use a bash launcher initializing the runfiles library",
+            ),
+            "_runfiles_dep": attr.label(
+                default = Label("//shell/runfiles"),
             ),
             "_windows_constraint": attr.label(
                 default = "@platforms//os:windows",

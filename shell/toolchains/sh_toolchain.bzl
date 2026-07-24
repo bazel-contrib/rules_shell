@@ -28,10 +28,6 @@ def _sh_toolchain_impl(ctx):
 sh_toolchain = rule(
     doc = "A runtime toolchain for shell targets.",
     attrs = {
-        "path": attr.string(
-            doc = "Absolute path to the shell interpreter.",
-            mandatory = True,
-        ),
         "launcher": attr.label(
             doc = "The generic launcher binary to use to run sh_binary/sh_test targets (only used when targeting Windows).",
             cfg = "target",
@@ -43,6 +39,10 @@ sh_toolchain = rule(
             cfg = "exec",
             allow_single_file = True,
             executable = True,
+        ),
+        "path": attr.string(
+            doc = "Absolute path to the shell interpreter.",
+            mandatory = True,
         ),
     },
     implementation = _sh_toolchain_impl,

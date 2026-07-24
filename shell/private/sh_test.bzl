@@ -41,16 +41,16 @@ sh_test(
     test = True,
     fragments = ["coverage"],
     extra_attrs = {
-        "_lcov_merger": attr.label(
-            cfg = config.exec(exec_group = "test"),
-            default = configuration_field(fragment = "coverage", name = "output_generator"),
-            executable = True,
-        ),
         # Add the script as an attribute in order for sh_test to output code coverage results for
         # code covered by CC binaries invocations.
         "_collect_cc_coverage": attr.label(
             cfg = config.exec(exec_group = "test"),
             default = "@bazel_tools//tools/test:collect_cc_coverage",
+            executable = True,
+        ),
+        "_lcov_merger": attr.label(
+            cfg = config.exec(exec_group = "test"),
+            default = configuration_field(fragment = "coverage", name = "output_generator"),
             executable = True,
         ),
     },

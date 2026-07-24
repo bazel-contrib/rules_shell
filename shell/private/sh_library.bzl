@@ -91,17 +91,6 @@ sh_library(
 </pre>
 """,
     attrs = {
-        "srcs": attr.label_list(
-            allow_files = True,
-            doc = """
-The list of input files.
-<p>
-  This attribute should be used to list shell script source files that belong to
-  this library. Scripts can load other scripts using the shell's <code>source</code>
-  or <code>.</code> command.
-</p>
-""",
-        ),
         "data": attr.label_list(
             allow_files = True,
             flags = ["SKIP_CONSTRAINTS_OVERRIDE"],
@@ -117,6 +106,17 @@ most build rules</a>.
   This attribute should be used to list other <code>sh_library</code> rules that provide
   interpreted program source code depended on by the code in <code>srcs</code>. The files
   provided by these rules will be present among the <code>runfiles</code> of this target.
+</p>
+""",
+        ),
+        "srcs": attr.label_list(
+            allow_files = True,
+            doc = """
+The list of input files.
+<p>
+  This attribute should be used to list shell script source files that belong to
+  this library. Scripts can load other scripts using the shell's <code>source</code>
+  or <code>.</code> command.
 </p>
 """,
         ),
