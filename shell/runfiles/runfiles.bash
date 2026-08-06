@@ -128,6 +128,31 @@ function __runfiles_escape_grep() {
 }
 export -f __runfiles_escape_grep
 
+# When manifest lookup returns a relative path (e.g., from a symlink created
+# with ctx.actions.symlink target_path), the -e existence check in
+# runfiles_rlocation_checked fails because the path isn't anchored. This helper
+# derives the runfiles directory from the manifest path and retries the lookup
+# using the original rlocation key, resolving symlinks through the filesystem.
+function __runfiles_try_dir_lookup() {
+  local dir=""
+  if [[ "${RUNFILES_MANIFEST_FILE}" == *_manifest \
+        && -d "${RUNFILES_MANIFEST_FILE%_manifest}" ]]; then
+    dir="${RUNFILES_MANIFEST_FILE%_manifest}"
+  elif [[ "${RUNFILES_MANIFEST_FILE}" == */MANIFEST \
+          && -d "${RUNFILES_MANIFEST_FILE%/MANIFEST}" ]]; then
+    dir="${RUNFILES_MANIFEST_FILE%/MANIFEST}"
+  fi
+  if [[ -n "$dir" && -e "$dir/$1" ]]; then
+    if [[ "${RUNFILES_LIB_DEBUG:-}" == 1 ]]; then
+      echo >&2 "INFO[runfiles.bash]: rlocation($1): resolved relative manifest entry via directory ($dir), return"
+    fi
+    echo "$dir/$1"
+    return 0
+  fi
+  return 1
+}
+export -f __runfiles_try_dir_lookup
+
 # Prints to stdout the runtime location of a data-dependency.
 # The optional second argument can be used to specify the canonical name of the
 # repository whose repository mapping should be used to resolve the repository
@@ -447,6 +472,9 @@ function runfiles_rlocation_checked() {
           echo "$candidate"
           return 0
         fi
+        if [[ "$prefix_result" != /* ]] && __runfiles_try_dir_lookup "$1"; then
+          return 0
+        fi
         # At this point, the manifest lookup of prefix has been successful,
         # but the file at the relative path given by the suffix does not
         # exist. We do not continue the lookup with a shorter prefix for two
@@ -476,6 +504,8 @@ function runfiles_rlocation_checked() {
           echo >&2 "INFO[runfiles.bash]: rlocation($1): found in manifest as ($result)"
         fi
         echo "$result"
+      elif [[ "$result" != /* ]] && __runfiles_try_dir_lookup "$1"; then
+        :
       else
         if [[ "${RUNFILES_LIB_DEBUG:-}" == 1 ]]; then
           echo >&2 "INFO[runfiles.bash]: rlocation($1): found in manifest as ($result), but file does not exist"

@@ -512,6 +512,46 @@ EOF
   [[ "$(rlocation "repo2+/foo/runfile" "my_module++ext+repo1" || echo failed)" == "$tmpdir/repo2+/runfile" ]] || fail
 }
 
+function test_manifest_based_rlocation_relative_symlink() {
+  local tmpdir="$(mktemp -d $TEST_TMPDIR/tmp.XXXXXXXX)"
+
+  # Create the runfiles directory alongside the manifest.
+  local runfiles_dir="$tmpdir/foo.runfiles"
+  mkdir -p "$runfiles_dir/a/b"
+  touch "$runfiles_dir/a/b/target"
+  mkdir -p "$runfiles_dir/pkg/dir/sub"
+  touch "$runfiles_dir/pkg/dir/file"
+  touch "$runfiles_dir/pkg/dir/sub/file"
+
+  # Manifest entries with relative paths as values, simulating
+  # ctx.actions.symlink(target_path=...) which produces relative symlinks.
+  # We don't need to create the asctual symlink here, it just needs to be an
+  # unresolvable relative path in the manifest that would trigger the fallback
+  cat > "$tmpdir/foo.runfiles_manifest" << EOF
+a/b/target ../relative/target
+pkg/dir relative_dir
+EOF
+
+  export RUNFILES_DIR=
+  export RUNFILES_MANIFEST_FILE="$tmpdir/foo.runfiles_manifest"
+  source "$runfiles_lib_path"
+
+  # Exact match: manifest value is relative, but the file exists in the
+  # runfiles directory at the original key. __runfiles_try_dir_lookup resolves
+  # it via the directory.
+  [[ "$(rlocation a/b/target || echo failed)" == "$runfiles_dir/a/b/target" ]] || fail
+
+  # Prefix match: manifest maps "pkg/dir" to a relative path. Looking up a
+  # file under that prefix constructs a relative candidate that fails -e, then
+  # __runfiles_try_dir_lookup resolves via the directory.
+  [[ "$(rlocation pkg/dir/file || echo failed)" == "$runfiles_dir/pkg/dir/file" ]] || fail
+  [[ "$(rlocation pkg/dir/sub/file || echo failed)" == "$runfiles_dir/pkg/dir/sub/file" ]] || fail
+
+  # Nonexistent files still return empty even with the fallback.
+  [[ -z "$(rlocation a/b/nonexistent || echo failed)" ]] || fail
+  [[ -z "$(rlocation pkg/dir/nonexistent || echo failed)" ]] || fail
+}
+
 function test_directory_based_envvars() {
   export RUNFILES_DIR=mock/runfiles
   export RUNFILES_MANIFEST_FILE=
