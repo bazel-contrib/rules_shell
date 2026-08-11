@@ -512,6 +512,97 @@ EOF
   [[ "$(rlocation "repo2+/foo/runfile" "my_module++ext+repo1" || echo failed)" == "$tmpdir/repo2+/runfile" ]] || fail
 }
 
+# Writes a script that reports the repository it lies in via the given function.
+# The function must not be defined by more than one script in a single test, as
+# runfiles_current_repository resolves the path of the script that defines it.
+function write_current_repository_lib() {
+  local -r path="$1"
+  local -r func="$2"
+  local -r result="${3:-}"
+  mkdir -p "$(dirname "$path")"
+  if [[ -n "$result" ]]; then
+    # A stale copy that must never be sourced.
+    cat > "$path" << EOF
+function $func() {
+  echo "$result"
+}
+EOF
+  else
+    cat > "$path" << EOF
+function $func() {
+  runfiles_current_repository 1
+}
+EOF
+  fi
+}
+
+function test_current_repository_directory_based() {
+  local tmpdir="$(mktemp -d $TEST_TMPDIR/tmp.XXXXXXXX)"
+
+  export RUNFILES_DIR="${tmpdir}/mock/runfiles"
+  export RUNFILES_MANIFEST_FILE=
+  write_current_repository_lib "$RUNFILES_DIR/protobuf+3.19.2/foo/lib.sh" repo_of_other
+  write_current_repository_lib "$RUNFILES_DIR/_main/bar/lib.sh" repo_of_main
+  source "$runfiles_lib_path"
+
+  source "$(rlocation "protobuf+3.19.2/foo/lib.sh" "")" || fail
+  [[ "$(repo_of_other || echo failed)" == "protobuf+3.19.2" ]] || fail
+
+  source "$(rlocation "_main/bar/lib.sh" "")" || fail
+  [[ "$(repo_of_main || echo failed)" == "" ]] || fail
+}
+
+function test_current_repository_manifest_based() {
+  local tmpdir="$(mktemp -d $TEST_TMPDIR/tmp.XXXXXXXX)"
+
+  export RUNFILES_DIR=
+  export RUNFILES_MANIFEST_FILE="$tmpdir/foo.runfiles_manifest"
+  write_current_repository_lib "$tmpdir/protobuf+3.19.2/foo/lib.sh" repo_of_other
+  write_current_repository_lib "$tmpdir/_main/bar/lib.sh" repo_of_main
+  cat > "$RUNFILES_MANIFEST_FILE" << EOF
+protobuf+3.19.2/foo/lib.sh $tmpdir/protobuf+3.19.2/foo/lib.sh
+_main/bar/lib.sh $tmpdir/_main/bar/lib.sh
+EOF
+  source "$runfiles_lib_path"
+
+  source "$(rlocation "protobuf+3.19.2/foo/lib.sh" "")" || fail
+  [[ "$(repo_of_other || echo failed)" == "protobuf+3.19.2" ]] || fail
+
+  source "$(rlocation "_main/bar/lib.sh" "")" || fail
+  [[ "$(repo_of_main || echo failed)" == "" ]] || fail
+}
+
+# Both envvars are set at the same time e.g. on Windows with --enable_runfiles,
+# where the runfiles directory contains the MANIFEST file that
+# runfiles_export_envvars promotes to RUNFILES_MANIFEST_FILE. The manifest maps
+# rlocation paths to the locations of the *original* files, so a caller that had
+# been looked up in the runfiles directory could never be found in it.
+function test_current_repository_directory_and_manifest_based() {
+  local tmpdir="$(mktemp -d $TEST_TMPDIR/tmp.XXXXXXXX)"
+
+  export RUNFILES_DIR="${tmpdir}/mock/runfiles"
+  export RUNFILES_MANIFEST_FILE="$RUNFILES_DIR/MANIFEST"
+  write_current_repository_lib "$tmpdir/protobuf+3.19.2/foo/lib.sh" repo_of_other
+  write_current_repository_lib "$tmpdir/_main/bar/lib.sh" repo_of_main
+  # The runfiles directory may hold stale contents, so the manifest wins.
+  mkdir -p "$RUNFILES_DIR"
+  write_current_repository_lib "$RUNFILES_DIR/protobuf+3.19.2/foo/lib.sh" repo_of_other stale
+  write_current_repository_lib "$RUNFILES_DIR/_main/bar/lib.sh" repo_of_main stale
+  cat > "$RUNFILES_MANIFEST_FILE" << EOF
+protobuf+3.19.2/foo/lib.sh $tmpdir/protobuf+3.19.2/foo/lib.sh
+_main/bar/lib.sh $tmpdir/_main/bar/lib.sh
+EOF
+  source "$runfiles_lib_path"
+
+  [[ "$(rlocation "protobuf+3.19.2/foo/lib.sh" "" || echo failed)" == "$tmpdir/protobuf+3.19.2/foo/lib.sh" ]] || fail
+  source "$(rlocation "protobuf+3.19.2/foo/lib.sh" "")" || fail
+  [[ "$(repo_of_other || echo failed)" == "protobuf+3.19.2" ]] || fail
+
+  [[ "$(rlocation "_main/bar/lib.sh" "" || echo failed)" == "$tmpdir/_main/bar/lib.sh" ]] || fail
+  source "$(rlocation "_main/bar/lib.sh" "")" || fail
+  [[ "$(repo_of_main || echo failed)" == "" ]] || fail
+}
+
 function test_directory_based_envvars() {
   export RUNFILES_DIR=mock/runfiles
   export RUNFILES_MANIFEST_FILE=

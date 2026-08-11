@@ -374,12 +374,11 @@ function runfiles_rlocation_checked() {
   # FIXME: If the runfiles lookup fails, the exit code of this function is 0 if
   #  and only if the runfiles manifest exists. In particular, the exit code
   #  behavior is not consistent across platforms.
-  if [[ -e "${RUNFILES_DIR:-/dev/null}/$1" ]]; then
-    if [[ "${RUNFILES_LIB_DEBUG:-}" == 1 ]]; then
-      echo >&2 "INFO[runfiles.bash]: rlocation($1): found under RUNFILES_DIR ($RUNFILES_DIR), return"
-    fi
-    echo "${RUNFILES_DIR}/$1"
-  elif [[ -f "${RUNFILES_MANIFEST_FILE:-/dev/null}" ]]; then
+  # The manifest takes precedence over the runfiles directory: whether the directory is populated
+  # is a property of the execution of the action or test, which is not known at analysis time, so
+  # the directory may exist but contain the stale contents of a previous execution. If the manifest
+  # exists, it is always authoritative.
+  if [[ -f "${RUNFILES_MANIFEST_FILE:-/dev/null}" ]]; then
     if [[ "${RUNFILES_LIB_DEBUG:-}" == 1 ]]; then
       echo >&2 "INFO[runfiles.bash]: rlocation($1): looking in RUNFILES_MANIFEST_FILE ($RUNFILES_MANIFEST_FILE)"
     fi
@@ -483,6 +482,11 @@ function runfiles_rlocation_checked() {
         echo ""
       fi
     fi
+  elif [[ -e "${RUNFILES_DIR:-/dev/null}/$1" ]]; then
+    if [[ "${RUNFILES_LIB_DEBUG:-}" == 1 ]]; then
+      echo >&2 "INFO[runfiles.bash]: rlocation($1): found under RUNFILES_DIR ($RUNFILES_DIR), return"
+    fi
+    echo "${RUNFILES_DIR}/$1"
   else
     if [[ "${RUNFILES_LIB_DEBUG:-}" == 1 ]]; then
       echo >&2 "ERROR[runfiles.bash]: cannot look up runfile \"$1\" " \
