@@ -87,14 +87,34 @@
 # You can skip steps 1 and 2 when setting "use_bash_launcher" attribute in sh_binary or sh_test.
 #
 
+# The runfiles path of this library, which is also where the initialization snippet sources it from.
+# Exported since it is read by the exported functions below.
+export _RLOCATION_RUNFILES_LIB_PATH=bazel_tools/tools/bash/runfiles/runfiles.bash
+
 if [[ ! -d "${RUNFILES_DIR:-/dev/null}" && ! -f "${RUNFILES_MANIFEST_FILE:-/dev/null}" ]]; then
   if [[ -f "$0.runfiles_manifest" ]]; then
     export RUNFILES_MANIFEST_FILE="$0.runfiles_manifest"
   elif [[ -f "$0.runfiles/MANIFEST" ]]; then
     export RUNFILES_MANIFEST_FILE="$0.runfiles/MANIFEST"
-  elif [[ -f "$0.runfiles/bazel_tools/tools/bash/runfiles/runfiles.bash" ]]; then
+  elif [[ -f "$0.runfiles/$_RLOCATION_RUNFILES_LIB_PATH" ]]; then
     export RUNFILES_DIR="$0.runfiles"
   fi
+fi
+
+# _RLOCATION_USE_RUNFILES_DIR is set to 1 if the runfiles directory can be used to look up runfiles
+# and to the empty string otherwise. It is exported for subprocesses that use the functions below
+# without sourcing this library, but never read back from the environment: it is always determined
+# here, so that it cannot contradict the RUNFILES_DIR it belongs to.
+#
+# Whether a runfiles directory is populated is a property of how the action or test is executed
+# rather than of the build: with --noenable_runfiles, Bazel leaves behind a directory that contains
+# only the MANIFEST file and the subdirectory of the main repository, but the sandbox and remote
+# execution materialize it in full regardless. The presence of this library in the directory
+# distinguishes the two cases as it is just an ordinary runfile.
+if [[ -f "${RUNFILES_DIR:-/dev/null}/$_RLOCATION_RUNFILES_LIB_PATH" ]]; then
+  export _RLOCATION_USE_RUNFILES_DIR=1
+else
+  export _RLOCATION_USE_RUNFILES_DIR=
 fi
 
 case "$(uname -s | tr '[:upper:]' '[:lower:]')" in
@@ -229,14 +249,18 @@ function runfiles_export_envvars() {
       export RUNFILES_MANIFEST_FILE=
     fi
   elif [[ ! -d "${RUNFILES_DIR:-/dev/null}" ]]; then
+    # Only pass on a runfiles directory that has been fully materialized so that
+    # subprocesses that aren't aware of this issue don't blindly use it.
     if [[ "$RUNFILES_MANIFEST_FILE" == */MANIFEST \
-          && -d "${RUNFILES_MANIFEST_FILE%/MANIFEST}" ]]; then
+          && -f "${RUNFILES_MANIFEST_FILE%/MANIFEST}/$_RLOCATION_RUNFILES_LIB_PATH" ]]; then
       export RUNFILES_DIR="${RUNFILES_MANIFEST_FILE%/MANIFEST}"
       export JAVA_RUNFILES="$RUNFILES_DIR"
+      export _RLOCATION_USE_RUNFILES_DIR=1
     elif [[ "$RUNFILES_MANIFEST_FILE" == *_manifest \
-          && -d "${RUNFILES_MANIFEST_FILE%_manifest}" ]]; then
+          && -f "${RUNFILES_MANIFEST_FILE%_manifest}/$_RLOCATION_RUNFILES_LIB_PATH" ]]; then
       export RUNFILES_DIR="${RUNFILES_MANIFEST_FILE%_manifest}"
       export JAVA_RUNFILES="$RUNFILES_DIR"
+      export _RLOCATION_USE_RUNFILES_DIR=1
     else
       export RUNFILES_DIR=
     fi
@@ -267,43 +291,29 @@ function runfiles_current_repository() {
   fi
 
   local rlocation_path=
+  # Replace \ with / since the manifest uses / as the path separator even on Windows.
+  local normalized_caller_path
+  normalized_caller_path="$(echo "$caller_path" | sed 's|\\\\*|/|g')"
 
-  # If the runfiles manifest exists, search for an entry with target the caller's path.
-  if [[ -f "${RUNFILES_MANIFEST_FILE:-/dev/null}" ]]; then
-    # Escape $caller_path for use in the grep regex below. Also replace \ with / since the manifest
-    # uses / as the path separator even on Windows.
-    local -r normalized_caller_path="$(echo "$caller_path" | sed 's|\\\\*|/|g')"
+  # The caller's path was returned by rlocation, so only the source of truth that rlocation uses can
+  # contain it: a path looked up in the runfiles directory lies in that directory and is never the
+  # target of a manifest entry, which is the location of the original file.
+  if [[ -f "${RUNFILES_MANIFEST_FILE:-/dev/null}" && -z "$_RLOCATION_USE_RUNFILES_DIR" ]]; then
+    # Search for an entry whose target is the caller's path.
     local -r escaped_caller_path="$(__runfiles_escape_grep "$normalized_caller_path")"
     rlocation_path=$(__runfiles_maybe_grep -m1 "^[^ ]* ${escaped_caller_path}$" "${RUNFILES_MANIFEST_FILE}" | cut -d ' ' -f 1)
     if [[ -z "$rlocation_path" ]]; then
       if [[ "${RUNFILES_LIB_DEBUG:-}" == 1 ]]; then
-        echo >&2 "ERROR[runfiles.bash]: runfiles_current_repository($idx): ($normalized_caller_path) is not the target of an entry in the runfiles manifest ($RUNFILES_MANIFEST_FILE)"
+        echo >&2 "INFO[runfiles.bash]: runfiles_current_repository($idx): ($normalized_caller_path) is not the target of an entry in the runfiles manifest ($RUNFILES_MANIFEST_FILE)"
       fi
-      # The binary may also be run directly from bazel-bin or bazel-out.
-      local -r repository=$(echo "$normalized_caller_path" | __runfiles_maybe_grep -E -o '(^|/)(bazel-out/[^/]+/bin|bazel-bin)/external/[^/]+/' | tail -1 | awk -F/ '{print $(NF-1)}')
-      if [[ -n "$repository" ]]; then
-        if [[ "${RUNFILES_LIB_DEBUG:-}" == 1 ]]; then
-          echo >&2 "INFO[runfiles.bash]: runfiles_current_repository($idx): ($normalized_caller_path) lies in repository ($repository) (parsed exec path)"
-        fi
-        echo "$repository"
-      else
-        if [[ "${RUNFILES_LIB_DEBUG:-}" == 1 ]]; then
-          echo >&2 "INFO[runfiles.bash]: runfiles_current_repository($idx): ($normalized_caller_path) lies in the main repository (parsed exec path)"
-        fi
-        echo ""
-      fi
-      return 1
     else
       if [[ "${RUNFILES_LIB_DEBUG:-}" == 1 ]]; then
         echo >&2 "INFO[runfiles.bash]: runfiles_current_repository($idx): ($normalized_caller_path) is the target of ($rlocation_path) in the runfiles manifest"
       fi
     fi
-  fi
-
-  # If the runfiles directory exists, check if the caller's path is of the form
-  # $RUNFILES_DIR/rlocation_path and if so, set $rlocation_path.
-  if [[ -z "$rlocation_path" && -d "${RUNFILES_DIR:-/dev/null}" ]]; then
-    normalized_caller_path="$(echo "$caller_path" | sed 's|\\\\*|/|g')"
+  elif [[ -d "${RUNFILES_DIR:-/dev/null}" ]]; then
+    # Check whether the caller's path is of the form $RUNFILES_DIR/rlocation_path.
+    local normalized_dir
     normalized_dir="$(echo "${RUNFILES_DIR%[\/]}" | sed 's|\\\\*|/|g')"
     if [[ -n "${_RLOCATION_GREP_CASE_INSENSITIVE_ARGS}" ]]; then
       # When comparing file paths insensitively, also normalize the case of the prefixes.
@@ -318,35 +328,36 @@ function runfiles_current_repository() {
       if [[ "${RUNFILES_LIB_DEBUG:-}" == 1 ]]; then
         echo >&2 "INFO[runfiles.bash]: runfiles_current_repository($idx): ($normalized_caller_path) does not lie under the runfiles directory ($normalized_dir)"
       fi
-      # The only shell script that is not executed from the runfiles directory (if it is populated)
-      # is the sh_binary entrypoint. Parse its path under the execroot, using the last match to
-      # allow for nested execroots (e.g. in Bazel integration tests). The binary may also be run
-      # directly from bazel-bin.
-      local -r repository=$(echo "$normalized_caller_path" | __runfiles_maybe_grep -E -o '(^|/)(bazel-out/[^/]+/bin|bazel-bin)/external/[^/]+/' | tail -1 | awk -F/ '{print $(NF-1)}')
-      if [[ -n "$repository" ]]; then
-        if [[ "${RUNFILES_LIB_DEBUG:-}" == 1 ]]; then
-          echo >&2 "INFO[runfiles.bash]: runfiles_current_repository($idx): ($normalized_caller_path) lies in repository ($repository) (parsed exec path)"
-        fi
-        echo "$repository"
-      else
-        if [[ "${RUNFILES_LIB_DEBUG:-}" == 1 ]]; then
-          echo >&2 "INFO[runfiles.bash]: runfiles_current_repository($idx): ($normalized_caller_path) lies in the main repository (parsed exec path)"
-        fi
-        echo ""
-      fi
-      return 0
     else
       if [[ "${RUNFILES_LIB_DEBUG:-}" == 1 ]]; then
         echo >&2 "INFO[runfiles.bash]: runfiles_current_repository($idx): ($caller_path) has path ($rlocation_path) relative to the runfiles directory ($RUNFILES_DIR)"
       fi
     fi
-  fi
-
-  if [[ -z "$rlocation_path" ]]; then
+  else
     if [[ "${RUNFILES_LIB_DEBUG:-}" == 1 ]]; then
       echo >&2 "ERROR[runfiles.bash]: runfiles_current_repository($idx): cannot determine repository for ($caller_path) since neither the runfiles directory (${RUNFILES_DIR:-}) nor the runfiles manifest (${RUNFILES_MANIFEST_FILE:-}) exist"
     fi
     return 1
+  fi
+
+  if [[ -z "$rlocation_path" ]]; then
+    # The only shell script that is not among the runfiles is the entry point of a binary, which is
+    # executed from the execroot. Parse its path under the execroot, using the last match to allow
+    # for nested execroots (e.g. in Bazel integration tests). The binary may also be run directly
+    # from bazel-bin.
+    local -r repository=$(echo "$normalized_caller_path" | __runfiles_maybe_grep -E -o '(^|/)(bazel-out/[^/]+/bin|bazel-bin)/external/[^/]+/' | tail -1 | awk -F/ '{print $(NF-1)}')
+    if [[ -n "$repository" ]]; then
+      if [[ "${RUNFILES_LIB_DEBUG:-}" == 1 ]]; then
+        echo >&2 "INFO[runfiles.bash]: runfiles_current_repository($idx): ($normalized_caller_path) lies in repository ($repository) (parsed exec path)"
+      fi
+      echo "$repository"
+    else
+      if [[ "${RUNFILES_LIB_DEBUG:-}" == 1 ]]; then
+        echo >&2 "INFO[runfiles.bash]: runfiles_current_repository($idx): ($normalized_caller_path) lies in the main repository (parsed exec path)"
+      fi
+      echo ""
+    fi
+    return 0
   fi
 
   if [[ "${RUNFILES_LIB_DEBUG:-}" == 1 ]]; then
@@ -374,11 +385,11 @@ function runfiles_rlocation_checked() {
   # FIXME: If the runfiles lookup fails, the exit code of this function is 0 if
   #  and only if the runfiles manifest exists. In particular, the exit code
   #  behavior is not consistent across platforms.
-  # The manifest takes precedence over the runfiles directory: whether the directory is populated
-  # is a property of the execution of the action or test, which is not known at analysis time, so
-  # the directory may exist but contain the stale contents of a previous execution. If the manifest
-  # exists, it is always authoritative.
-  if [[ -f "${RUNFILES_MANIFEST_FILE:-/dev/null}" ]]; then
+  # Exactly one of the runfiles directory and the manifest is consulted, so that the paths returned
+  # by this function are consistent with those that runfiles_current_repository resolves. The
+  # directory is preferred if it is usable since looking a path up in it does not require scanning
+  # the manifest, which can be very large.
+  if [[ -f "${RUNFILES_MANIFEST_FILE:-/dev/null}" && -z "$_RLOCATION_USE_RUNFILES_DIR" ]]; then
     if [[ "${RUNFILES_LIB_DEBUG:-}" == 1 ]]; then
       echo >&2 "INFO[runfiles.bash]: rlocation($1): looking in RUNFILES_MANIFEST_FILE ($RUNFILES_MANIFEST_FILE)"
     fi

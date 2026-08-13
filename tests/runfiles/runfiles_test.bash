@@ -73,6 +73,13 @@ function find_runfiles_lib() {
   fi
 }
 
+# Marks the given runfiles directory as fully materialized by placing the runfiles library in it at
+# the path the initialization snippet looks it up at.
+function materialize_runfiles_dir() {
+  mkdir -p "$1/bazel_tools/tools/bash/runfiles"
+  cp "$runfiles_lib_path" "$1/bazel_tools/tools/bash/runfiles/runfiles.bash"
+}
+
 function test_rlocation_call_requires_no_envvars() {
   export RUNFILES_DIR=mock/runfiles
   export RUNFILES_MANIFEST_FILE=
@@ -216,6 +223,7 @@ function test_manifest_based_envvars() {
   export RUNFILES_DIR=
   export RUNFILES_MANIFEST_FILE=$tmpdir/foo.runfiles_manifest
   mkdir -p $tmpdir/foo.runfiles
+  materialize_runfiles_dir "$tmpdir/foo.runfiles"
   source "$runfiles_lib_path"
 
   runfiles_export_envvars
@@ -574,20 +582,50 @@ EOF
 
 # Both envvars are set at the same time e.g. on Windows with --enable_runfiles,
 # where the runfiles directory contains the MANIFEST file that
-# runfiles_export_envvars promotes to RUNFILES_MANIFEST_FILE. The manifest maps
-# rlocation paths to the locations of the *original* files, so a caller that had
-# been looked up in the runfiles directory could never be found in it.
-function test_current_repository_directory_and_manifest_based() {
+# runfiles_export_envvars promotes to RUNFILES_MANIFEST_FILE. rlocation and
+# runfiles_current_repository then have to agree on which of the two they use:
+# the manifest maps rlocation paths to the locations of the original files, so a
+# path that rlocation resolved against the runfiles directory can never be the
+# target of a manifest entry.
+function test_current_repository_materialized_directory_and_manifest_based() {
   local tmpdir="$(mktemp -d $TEST_TMPDIR/tmp.XXXXXXXX)"
 
   export RUNFILES_DIR="${tmpdir}/mock/runfiles"
   export RUNFILES_MANIFEST_FILE="$RUNFILES_DIR/MANIFEST"
+  mkdir -p "$RUNFILES_DIR"
+  write_current_repository_lib "$RUNFILES_DIR/protobuf+3.19.2/foo/lib.sh" repo_of_other
+  write_current_repository_lib "$RUNFILES_DIR/_main/bar/lib.sh" repo_of_main
+  # Copies that must never be sourced: the runfiles directory is materialized, so the manifest is
+  # not consulted at all.
+  write_current_repository_lib "$tmpdir/protobuf+3.19.2/foo/lib.sh" repo_of_other unused
+  write_current_repository_lib "$tmpdir/_main/bar/lib.sh" repo_of_main unused
+  cat > "$RUNFILES_MANIFEST_FILE" << EOF
+protobuf+3.19.2/foo/lib.sh $tmpdir/protobuf+3.19.2/foo/lib.sh
+_main/bar/lib.sh $tmpdir/_main/bar/lib.sh
+EOF
+  materialize_runfiles_dir "$RUNFILES_DIR"
+  source "$runfiles_lib_path"
+
+  [[ "$(rlocation "protobuf+3.19.2/foo/lib.sh" "" || echo failed)" == "$RUNFILES_DIR/protobuf+3.19.2/foo/lib.sh" ]] || fail
+  source "$(rlocation "protobuf+3.19.2/foo/lib.sh" "")" || fail
+  [[ "$(repo_of_other || echo failed)" == "protobuf+3.19.2" ]] || fail
+
+  [[ "$(rlocation "_main/bar/lib.sh" "" || echo failed)" == "$RUNFILES_DIR/_main/bar/lib.sh" ]] || fail
+  source "$(rlocation "_main/bar/lib.sh" "")" || fail
+  [[ "$(repo_of_main || echo failed)" == "" ]] || fail
+}
+
+# With --noenable_runfiles, Bazel leaves behind a runfiles directory that only contains the MANIFEST
+# file and the subdirectory of the main repository, which both functions have to recognize as not
+# usable.
+function test_current_repository_unmaterialized_directory_and_manifest_based() {
+  local tmpdir="$(mktemp -d $TEST_TMPDIR/tmp.XXXXXXXX)"
+
+  export RUNFILES_DIR="${tmpdir}/mock/runfiles"
+  export RUNFILES_MANIFEST_FILE="$RUNFILES_DIR/MANIFEST"
+  mkdir -p "$RUNFILES_DIR/_main"
   write_current_repository_lib "$tmpdir/protobuf+3.19.2/foo/lib.sh" repo_of_other
   write_current_repository_lib "$tmpdir/_main/bar/lib.sh" repo_of_main
-  # The runfiles directory may hold stale contents, so the manifest wins.
-  mkdir -p "$RUNFILES_DIR"
-  write_current_repository_lib "$RUNFILES_DIR/protobuf+3.19.2/foo/lib.sh" repo_of_other stale
-  write_current_repository_lib "$RUNFILES_DIR/_main/bar/lib.sh" repo_of_main stale
   cat > "$RUNFILES_MANIFEST_FILE" << EOF
 protobuf+3.19.2/foo/lib.sh $tmpdir/protobuf+3.19.2/foo/lib.sh
 _main/bar/lib.sh $tmpdir/_main/bar/lib.sh
@@ -601,6 +639,70 @@ EOF
   [[ "$(rlocation "_main/bar/lib.sh" "" || echo failed)" == "$tmpdir/_main/bar/lib.sh" ]] || fail
   source "$(rlocation "_main/bar/lib.sh" "")" || fail
   [[ "$(repo_of_main || echo failed)" == "" ]] || fail
+}
+
+# A materialized runfiles directory is preferred over the manifest, which requires scanning a
+# potentially very large file.
+function test_rlocation_prefers_materialized_directory() {
+  local tmpdir="$(mktemp -d $TEST_TMPDIR/tmp.XXXXXXXX)"
+
+  export RUNFILES_DIR="${tmpdir}/foo.runfiles"
+  export RUNFILES_MANIFEST_FILE="$RUNFILES_DIR/MANIFEST"
+  mkdir -p "$RUNFILES_DIR/_main/pkg" "$tmpdir/original/pkg"
+  touch "$RUNFILES_DIR/_main/pkg/file" "$tmpdir/original/pkg/file"
+  cat > "$RUNFILES_MANIFEST_FILE" << EOF
+_main/pkg/file $tmpdir/original/pkg/file
+EOF
+  materialize_runfiles_dir "$RUNFILES_DIR"
+  source "$runfiles_lib_path"
+
+  [[ "$(rlocation _main/pkg/file || echo failed)" == "$RUNFILES_DIR/_main/pkg/file" ]] || fail
+
+  # A runfile that is missing from the materialized directory is not looked up in the manifest.
+  rm "$RUNFILES_DIR/_main/pkg/file"
+  [[ "$(rlocation _main/pkg/file || echo failed)" == failed ]] || fail
+}
+
+# A subprocess may use the exported functions without sourcing the library itself, in which case it
+# does not learn which of the two the parent picked. It doesn't have to: it inherits RUNFILES_DIR
+# and RUNFILES_MANIFEST_FILE, either of which is usable on its own if set.
+function test_exported_functions_in_subprocess() {
+  local tmpdir="$(mktemp -d $TEST_TMPDIR/tmp.XXXXXXXX)"
+
+  export RUNFILES_DIR="$tmpdir/foo.runfiles"
+  export RUNFILES_MANIFEST_FILE=
+  mkdir -p "$RUNFILES_DIR/_main/pkg" "$tmpdir/original/pkg"
+  touch "$RUNFILES_DIR/_main/pkg/file" "$tmpdir/original/pkg/file"
+  materialize_runfiles_dir "$RUNFILES_DIR"
+  source "$runfiles_lib_path"
+
+  [[ "$(bash -c 'set -euo pipefail; rlocation _main/pkg/file')" == "$RUNFILES_DIR/_main/pkg/file" ]] || fail
+
+  # With both set, the subprocess is free to pick the manifest even though this process picked the
+  # directory, as long as what it resolves to exists.
+  export RUNFILES_MANIFEST_FILE="$RUNFILES_DIR/MANIFEST"
+  cat > "$RUNFILES_MANIFEST_FILE" << EOF
+_main/pkg/file $tmpdir/original/pkg/file
+EOF
+  local -r resolved="$(bash -c 'set -euo pipefail; rlocation _main/pkg/file')"
+  [[ -f "$resolved" ]] || fail "subprocess resolved to $resolved"
+}
+
+# A runfiles directory that has not been fully materialized should not be passed on to subprocesses,
+# which may blindly trust the value they are given.
+function test_manifest_based_envvars_unmaterialized_directory() {
+  local tmpdir="$(mktemp -d $TEST_TMPDIR/tmp.XXXXXXXX)"
+  echo "a b" > $tmpdir/foo.runfiles_manifest
+
+  export RUNFILES_DIR=
+  export RUNFILES_MANIFEST_FILE=$tmpdir/foo.runfiles_manifest
+  # What --noenable_runfiles leaves behind.
+  mkdir -p $tmpdir/foo.runfiles/_main
+  source "$runfiles_lib_path"
+
+  runfiles_export_envvars
+  [[ -z "${RUNFILES_DIR:-}" ]] || fail
+  [[ "${RUNFILES_MANIFEST_FILE:-}" == "$tmpdir/foo.runfiles_manifest" ]] || fail
 }
 
 function test_directory_based_envvars() {
