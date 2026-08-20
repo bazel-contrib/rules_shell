@@ -14,11 +14,58 @@
 
 """Common code for sh_binary and sh_test rules."""
 
+load("@bazel_skylib//rules:common_settings.bzl", "BuildSettingInfo")
 load(":providers.bzl", "ShBinaryInfo", "ShInfo")
 
 visibility(["//shell"])
 
 _SH_TOOLCHAIN_TYPE = Label("//shell:toolchain_type")
+
+_BASH_RUNFILES_INIT_PATH = "bazel_tools/tools/bash/runfiles/runfiles.bash"
+_SHELL_RUNFILES_INIT_PATH = "shell/runfiles/runfiles.sh"
+
+_BASH_LAUNCHER_TEMPLATE = """{shebang}
+
+# --- begin runfiles.bash initialization v3 ---
+set -uo pipefail; set +e; f={init_path}
+# shellcheck disable=SC1090
+source "${{RUNFILES_DIR:-/dev/null}}/$f" 2>/dev/null || \
+  source "$(grep -sm1 "^$f " "${{RUNFILES_MANIFEST_FILE:-/dev/null}}" | cut -f2- -d' ')" 2>/dev/null || \
+  source "$0.runfiles/$f" 2>/dev/null || \
+  source "$(grep -sm1 "^$f " "$0.runfiles_manifest" | cut -f2- -d' ')" 2>/dev/null || \
+  source "$(grep -sm1 "^$f " "$0.exe.runfiles_manifest" | cut -f2- -d' ')" 2>/dev/null || \
+  {{ echo>&2 "ERROR: cannot find $f"; exit 1; }}; f=; set -e
+# --- end runfiles.bash initialization v3 ---
+
+runfiles_export_envvars
+
+exec "$(rlocation "{src}")" "$@"
+"""
+
+# Pure-POSIX equivalent — no `source`, no `set -o pipefail`, no `grep`/`cut`.
+# Selected when `experimental_use_shell_runfiles` is on so the launcher works
+# under any POSIX shell (dash, ash, busybox sh, …) as the sh_toolchain.
+_POSIX_LAUNCHER_TEMPLATE = """{shebang}
+
+# --- begin runfiles.sh initialization v1 ---
+set +e; f={init_path}
+_rf_s() {{ [ -f "$1" ] || return 1; while IFS= read -r _rf_l; do \
+  case "$_rf_l" in "$f "*) . "${{_rf_l#"$f "}}"; return $?;; esac; \
+  done < "$1"; return 1; }}
+# shellcheck disable=SC1090
+. "${{RUNFILES_DIR:-/dev/null}}/$f" 2>/dev/null || \
+  _rf_s "${{RUNFILES_MANIFEST_FILE:-/dev/null}}" 2>/dev/null || \
+  . "$0.runfiles/$f" 2>/dev/null || \
+  _rf_s "$0.runfiles_manifest" 2>/dev/null || \
+  _rf_s "$0.exe.runfiles_manifest" 2>/dev/null || \
+  {{ echo>&2 "ERROR: cannot find $f"; exit 1; }}; f=; set -e
+unset -f _rf_s 2>/dev/null; unset _rf_l 2>/dev/null
+# --- end runfiles.sh initialization v1 ---
+
+runfiles_export_envvars
+
+exec "$(rlocation "{src}")" "$@"
+"""
 
 def _to_rlocation_path(ctx, file):
     if file.short_path.startswith("../"):
@@ -49,26 +96,23 @@ def _sh_executable_impl(ctx):
         else:
             shell = ctx.toolchains[_SH_TOOLCHAIN_TYPE].path
             shebang = "#!{}".format(shell)
+        if ctx.attr._use_shell_runfiles[BuildSettingInfo].value:
+            # POSIX-safe launcher body sources runfiles.sh via `.` and parses
+            # the manifest in-shell — works under any POSIX shell including
+            # dash (which the `posix_shell` .bazelrc config wires up).
+            template = _POSIX_LAUNCHER_TEMPLATE
+            init_path = _SHELL_RUNFILES_INIT_PATH
+        else:
+            # Default: bash launcher sources runfiles.bash. Requires the
+            # sh_toolchain to point at a bash-compatible shell (the body uses
+            # `source` and `set -o pipefail`).
+            template = _BASH_LAUNCHER_TEMPLATE
+            init_path = _BASH_RUNFILES_INIT_PATH
         ctx.actions.write(
             entrypoint,
-            content = """{shebang}
-
-# --- begin runfiles.bash initialization v3 ---
-set -uo pipefail; set +e; f=bazel_tools/tools/bash/runfiles/runfiles.bash
-# shellcheck disable=SC1090
-source "${{RUNFILES_DIR:-/dev/null}}/$f" 2>/dev/null || \
-  source "$(grep -sm1 "^$f " "${{RUNFILES_MANIFEST_FILE:-/dev/null}}" | cut -f2- -d' ')" 2>/dev/null || \
-  source "$0.runfiles/$f" 2>/dev/null || \
-  source "$(grep -sm1 "^$f " "$0.runfiles_manifest" | cut -f2- -d' ')" 2>/dev/null || \
-  source "$(grep -sm1 "^$f " "$0.exe.runfiles_manifest" | cut -f2- -d' ')" 2>/dev/null || \
-  {{ echo>&2 "ERROR: cannot find $f"; exit 1; }}; f=; set -e
-# --- end runfiles.bash initialization v3 ---
-
-runfiles_export_envvars
-
-exec "$(rlocation "{src}")" "$@"
-""".format(
+            content = template.format(
                 shebang = shebang,
+                init_path = init_path,
                 src = _to_rlocation_path(ctx, src),
             ),
             is_executable = True,
@@ -258,6 +302,10 @@ The file containing the shell script.
             ),
             "_runfiles_dep": attr.label(
                 default = Label("//shell/runfiles"),
+            ),
+            "_use_shell_runfiles": attr.label(
+                default = Label("//shell/settings:experimental_use_shell_runfiles"),
+                providers = [BuildSettingInfo],
             ),
             "_windows_constraint": attr.label(
                 default = "@platforms//os:windows",
