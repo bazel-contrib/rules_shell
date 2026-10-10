@@ -20,6 +20,48 @@ visibility(["//shell"])
 
 _SH_TOOLCHAIN_TYPE = Label("//shell:toolchain_type")
 
+# The two root symlinks under which //shell/runfiles installs the runfiles
+# library; see shell/runfiles/README.md.
+_BASH_RUNFILES_INIT_PATH = "bazel_tools/tools/bash/runfiles/runfiles.bash"
+_POSIX_RUNFILES_INIT_PATH = "rules_shell/shell/runfiles/runfiles.sh"
+
+# The launcher for `use_bash_launcher = True`, in POSIX shell so that it runs
+# under whatever the sh_toolchain points at. Under bash it sources
+# runfiles.bash, which exports the library's functions across the exec and
+# searches manifests with awk by default; under any other shell it sources
+# runfiles.sh. `.` on a missing file is fatal in a POSIX shell, so `_rf_d`
+# (directory) and `_rf_m` (manifest) resolve the candidate locations to an
+# existing path first, in the order of the bash snippet. `_rf_a` applies
+# runfiles.bash's awk rule to `_rf_m` itself, with a read loop as fallback.
+# RULES_SHELL_RUNFILES_CACHE is hidden while the library is sourced: the
+# launcher resolves one path, and an index would never survive the exec.
+_LAUNCHER_TEMPLATE = """\
+{shebang}
+
+_rf_c="${{RULES_SHELL_RUNFILES_CACHE:-}}"; RULES_SHELL_RUNFILES_CACHE=
+# --- begin runfiles initialization (rules_shell launcher) ---
+set -u; set +e; _rf_p=; _rf_a=
+if [ -n "${{BASH_VERSION:-}}" ]; then f={bash_init_path}; else f={posix_init_path}; fi
+if [ -n "${{AWK:-}}" ] || [ "${{RULES_SHELL_RUNFILES_USE_AWK:-}}" = 1 ] || \
+  {{ [ -n "${{BASH_VERSION:-}}" ] && [ "${{RULES_SHELL_RUNFILES_USE_AWK:-}}" != 0 ]; }}; then _rf_a=1; fi
+_rf_d() {{ [ -f "$1/$f" ] && _rf_p="$1/$f"; }}
+_rf_m() {{ [ -f "$1" ] || return 1; if [ -n "$_rf_a" ]; then \
+  _rf_p=$(${{AWK:-awk}} -v k="$f " 'index($0,k)==1{{print substr($0,length(k)+1);m=1;exit}}END{{exit !m}}' "$1" 2>/dev/null) && return; fi; \
+  while IFS= read -r _rf_l || [ -n "$_rf_l" ]; do \
+  case "$_rf_l" in "$f "*) _rf_p="${{_rf_l#"$f "}}"; return;; esac; done < "$1"; return 1; }}
+_rf_d "${{RUNFILES_DIR:-/dev/null}}" || _rf_m "${{RUNFILES_MANIFEST_FILE:-/dev/null}}" || \
+  _rf_d "$0.runfiles" || _rf_m "$0.runfiles_manifest" || _rf_m "$0.exe.runfiles_manifest" || \
+  {{ echo>&2 "ERROR: cannot find $f"; exit 1; }}
+# shellcheck disable=SC1090
+. "$_rf_p"; f=; unset -f _rf_d _rf_m; unset _rf_l _rf_p _rf_a; set -e
+# --- end runfiles initialization (rules_shell launcher) ---
+RULES_SHELL_RUNFILES_CACHE="$_rf_c"; unset _rf_c
+
+runfiles_export_envvars
+
+exec "$(rlocation "{src}")" "$@"
+"""
+
 def _to_rlocation_path(ctx, file):
     if file.short_path.startswith("../"):
         return file.short_path[3:]
@@ -51,24 +93,10 @@ def _sh_executable_impl(ctx):
             shebang = "#!{}".format(shell)
         ctx.actions.write(
             entrypoint,
-            content = """{shebang}
-
-# --- begin runfiles.bash initialization v3 ---
-set -uo pipefail; set +e; f=bazel_tools/tools/bash/runfiles/runfiles.bash
-# shellcheck disable=SC1090
-source "${{RUNFILES_DIR:-/dev/null}}/$f" 2>/dev/null || \
-  source "$(grep -sm1 "^$f " "${{RUNFILES_MANIFEST_FILE:-/dev/null}}" | cut -f2- -d' ')" 2>/dev/null || \
-  source "$0.runfiles/$f" 2>/dev/null || \
-  source "$(grep -sm1 "^$f " "$0.runfiles_manifest" | cut -f2- -d' ')" 2>/dev/null || \
-  source "$(grep -sm1 "^$f " "$0.exe.runfiles_manifest" | cut -f2- -d' ')" 2>/dev/null || \
-  {{ echo>&2 "ERROR: cannot find $f"; exit 1; }}; f=; set -e
-# --- end runfiles.bash initialization v3 ---
-
-runfiles_export_envvars
-
-exec "$(rlocation "{src}")" "$@"
-""".format(
+            content = _LAUNCHER_TEMPLATE.format(
                 shebang = shebang,
+                bash_init_path = _BASH_RUNFILES_INIT_PATH,
+                posix_init_path = _POSIX_RUNFILES_INIT_PATH,
                 src = _to_rlocation_path(ctx, src),
             ),
             is_executable = True,
@@ -253,8 +281,26 @@ The file containing the shell script.
 </p>
 """,
             ),
+            # TODO: The launcher is no longer bash-specific. Rename this to
+            # something like `use_launcher`, keeping `use_bash_launcher` around
+            # as a deprecated alias.
             "use_bash_launcher": attr.bool(
-                doc = "Use a bash launcher initializing the runfiles library",
+                doc = """
+Use a launcher initializing the runfiles library
+<p>
+  The launcher is written in POSIX shell and runs under whatever the
+  <code>sh_toolchain</code> points at. Under bash it sources
+  <code>runfiles.bash</code> and exports the library's functions (such as
+  <code>rlocation</code>) across <code>exec</code>, so the script can use them
+  without sourcing anything. Other shells cannot export functions: the
+  launcher then sources <code>runfiles.sh</code>, exports only
+  <code>RUNFILES_DIR</code> / <code>RUNFILES_MANIFEST_FILE</code>, and the
+  script has to source the runfiles library itself with the initialization
+  snippet documented in <code>runfiles.sh</code>. A non-bash
+  <code>sh_toolchain</code> requires Bazel 8 or newer, where
+  <code>runfiles.sh</code> is installed in the runfiles tree.
+</p>
+""",
             ),
             "_runfiles_dep": attr.label(
                 default = Label("//shell/runfiles"),
