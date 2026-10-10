@@ -1,26 +1,21 @@
-# Coverage for `use_bash_launcher` combined with the POSIX runfiles library:
-# the launcher snippet must work under a non-bash sh_toolchain, and the wrapped
-# scripts must be able to initialize the runfiles library themselves (POSIX
-# shells cannot inherit the launcher's functions across exec).
+# Coverage for `use_bash_launcher` under a non-bash sh_toolchain: the launcher
+# must work under a plain POSIX shell, and the wrapped scripts must be able to
+# initialize the runfiles library themselves, since a POSIX shell cannot
+# inherit the launcher's functions across exec.
 #
 # Use private rule implementations directly if all required features are available to provide test
 # coverage for Bazel 8.
 load("@bazel_features//:features.bzl", "bazel_features")
+load("@rules_shell//shell/private:root_symlinks.bzl", "ROOT_SYMLINKS_SUPPORTED")  # buildifier: disable=bzl-visibility
 load("@rules_shell//shell/private:sh_binary.bzl", "sh_binary")  # buildifier: disable=bzl-visibility
 load("@rules_shell//shell/private:sh_library.bzl", "sh_library")  # buildifier: disable=bzl-visibility
 load("@rules_shell//shell/private:sh_test.bzl", "sh_test")  # buildifier: disable=bzl-visibility
 
-# These targets source `shell/runfiles/runfiles.sh`, which is only present in
-# the runfiles tree when the POSIX runfiles library is selected.
-config_setting(
-    name = "posix_runfiles",
-    flag_values = {"@rules_shell//shell/settings:experimental_use_shell_runfiles": "true"},
-)
-
-_REQUIRES_POSIX_RUNFILES = select({
-    ":posix_runfiles": [],
-    "//conditions:default": ["@platforms//:incompatible"],
-})
+# These scripts source `rules_shell/shell/runfiles/runfiles.sh`, which
+# `@rules_shell//shell/runfiles` only installs where it provides the library
+# itself rather than deferring to the one bundled with Bazel (see
+# ROOT_SYMLINKS_SUPPORTED), i.e. on Bazel 8 and newer.
+_HAS_POSIX_RUNFILES = ROOT_SYMLINKS_SUPPORTED and bazel_features.rules._has_launcher_maker_toolchain
 
 sh_library(
     name = "lib",
@@ -28,18 +23,16 @@ sh_library(
     data = ["greeting.txt"],
 )
 
-bazel_features.rules._has_launcher_maker_toolchain and sh_binary(
+_HAS_POSIX_RUNFILES and sh_binary(
     name = "bin",
     srcs = ["bin.sh"],
-    target_compatible_with = _REQUIRES_POSIX_RUNFILES,
     use_bash_launcher = True,
     deps = [":lib"],
 )  # buildifier: disable=no-effect
 
-bazel_features.rules._has_launcher_maker_toolchain and sh_test(
+_HAS_POSIX_RUNFILES and sh_test(
     name = "test",
     srcs = ["test.sh"],
     data = [":bin"],
-    target_compatible_with = _REQUIRES_POSIX_RUNFILES,
     use_bash_launcher = True,
 )  # buildifier: disable=no-effect

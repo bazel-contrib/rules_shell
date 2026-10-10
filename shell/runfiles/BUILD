@@ -1,79 +1,71 @@
 load("//shell:sh_library.bzl", "sh_library")
 load("//shell/private:root_symlinks.bzl", "ROOT_SYMLINKS_SUPPORTED", "root_symlinks")
 
-config_setting(
-    name = "posix_runfiles",
-    flag_values = {"//shell/settings:experimental_use_shell_runfiles": "true"},
-)
-
+# The runfiles library. There is one implementation, runfiles.sh, reachable
+# under two names in the runfiles tree:
+#
+# - bazel_tools/tools/bash/runfiles/runfiles.bash, the path the bash
+#   initialization snippet (v3) and the launcher under bash source. It is a
+#   thin wrapper that sources runfiles.sh with awk enabled by default, so that
+#   scripts written against the historical grep-based library keep lookups
+#   whose cost does not grow with the manifest, and it exports everything that
+#   library exported.
+# - rules_shell/shell/runfiles/runfiles.sh, the path the POSIX initialization
+#   snippet (v1) and the launcher under any other shell source, which gets the
+#   pure POSIX behavior: shell builtins only.
+#
+# Both are root symlinks, which need the `skip_conflict_checking` parameter
+# added in Bazel 7.4.0. Where the native shell rules still exist (Bazel 7) the
+# alias keeps resolving to the library bundled with Bazel, as it always has,
+# and runfiles.sh is not installed: a launcher there has to run under bash.
 alias(
     name = "runfiles",
-    actual = select({
-        ":posix_runfiles": ":runfiles_sh_impl",
-        "//conditions:default": ":runfiles_impl" if ROOT_SYMLINKS_SUPPORTED else "@bazel_tools//tools/bash/runfiles",
-    }),
+    actual = ":runfiles_impl" if ROOT_SYMLINKS_SUPPORTED else "@bazel_tools//tools/bash/runfiles",
     visibility = ["//visibility:public"],
 )
 
 sh_library(
     name = "runfiles_impl",
-    data = [":runfiles_at_legacy_location"],
-    tags = ["manual"],
-    # The test suite depends on this directly rather than through `:runfiles`,
-    # so that it keeps testing the bash library with the flag flipped on.
-    visibility = ["//tests/runfiles:__pkg__"],
-)
-
-root_symlinks(
-    name = "runfiles_at_legacy_location",
-    root_symlinks = {
-        "runfiles.bash": "bazel_tools/tools/bash/runfiles/runfiles.bash",
-    },
-    tags = ["manual"],
-)
-
-sh_library(
-    name = "runfiles_sh_impl",
     data = [
+        ":runfiles_at_legacy_location",
         ":runfiles_sh_at_documented_location",
-        ":runfiles_sh_at_legacy_location",
     ],
     tags = ["manual"],
 )
 
+# runfiles.bash locates runfiles.sh next to itself, so the two are installed
+# side by side at the legacy location, as they are in the source tree.
+root_symlinks(
+    name = "runfiles_at_legacy_location",
+    root_symlinks = {
+        "runfiles.bash": "bazel_tools/tools/bash/runfiles/runfiles.bash",
+        "runfiles.sh": "bazel_tools/tools/bash/runfiles/runfiles.sh",
+    },
+    tags = ["manual"],
+)
+
+# Place runfiles.sh at the path used by the documented POSIX init snippet
+# (`f=rules_shell/shell/runfiles/runfiles.sh`). Its natural location depends on
+# the canonical name of this repository (`rules_shell+/...` under Bzlmod,
+# `rules_shell/...` under WORKSPACE, `_main/...` when it is the main
+# repository), which a copy-pasted snippet cannot know; the symlink makes the
+# WORKSPACE spelling hold everywhere. Under Bzlmod it is also the rlocation path
+# consumers use for the file, through the repository mapping.
+root_symlinks(
+    name = "runfiles_sh_at_documented_location",
+    root_symlinks = {
+        "runfiles.sh": "rules_shell/shell/runfiles/runfiles.sh",
+    },
+    tags = ["manual"],
+)
+
+# runfiles.sh on its own, under its natural path, for the test suites to source
+# the POSIX library directly.
 sh_library(
     name = "runfiles_sh",
     srcs = ["runfiles.sh"],
     tags = ["manual"],
     visibility = ["//tests/runfiles:__pkg__"],
-)
-
-# Place runfiles.sh at the root path used by the documented init snippet
-# (`f=shell/runfiles/runfiles.sh`). Otherwise it only appears under its
-# repo-prefixed location (e.g. `_main/shell/runfiles/runfiles.sh`) and the
-# snippet cannot find it.
-root_symlinks(
-    name = "runfiles_sh_at_documented_location",
-    root_symlinks = {
-        "runfiles.sh": "shell/runfiles/runfiles.sh",
-    },
-    tags = ["manual"],
-)
-
-# Native `sh_test` (legacy 7/8 modes) and every user script carrying the
-# documented bash init snippet initialize from
-# `f=bazel_tools/tools/bash/runfiles/runfiles.bash`. That path is hardcoded in
-# the native launcher and cannot be redirected from Starlark, so while the
-# `experimental_use_shell_runfiles` flag points the `:runfiles` alias here it
-# must still resolve to something sourceable. Serving runfiles.sh there is what
-# makes flipping the flag a drop-in replacement; the two implementations never
-# share a runfiles tree, since the alias selects between them.
-root_symlinks(
-    name = "runfiles_sh_at_legacy_location",
-    root_symlinks = {
-        "runfiles.sh": "bazel_tools/tools/bash/runfiles/runfiles.bash",
-    },
-    tags = ["manual"],
 )
 
 exports_files(

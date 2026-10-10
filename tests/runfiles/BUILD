@@ -1,10 +1,22 @@
 load("@rules_shellcheck//:def.bzl", "shellcheck_test")
 load("//shell:sh_test.bzl", "sh_test")
 
+# The bash suite against the library as every bash script sees it: through
+# `//shell/runfiles` and the legacy `bazel_tools/tools/bash/runfiles/runfiles.bash`
+# path, where runfiles.bash wraps runfiles.sh with awk enabled.
 sh_test(
     name = "runfiles_bash_test",
     srcs = ["runfiles_test.bash"],
-    deps = ["//shell/runfiles:runfiles_impl"],
+    deps = ["//shell/runfiles"],
+)
+
+# The same, with the wrapper's awk default switched off, so that the shell loops
+# are what the bash suite exercises through the legacy path.
+sh_test(
+    name = "runfiles_bash_no_awk_test",
+    srcs = ["runfiles_test.bash"],
+    env = {"RULES_SHELL_RUNFILES_USE_AWK": "0"},
+    deps = ["//shell/runfiles"],
 )
 
 sh_test(
@@ -32,12 +44,12 @@ sh_test(
     # Ubuntu, bash elsewhere. The `test_posix_shell_runfiles` presubmit task
     # guarantees dash coverage by setting RUNFILES_TEST_REQUIRE_POSIX_SH.
     #
-    # Running under bash selects the bash-specific manifest index key mangling,
-    # which `runfiles_sh_under_bash_test` covers on Linux. macOS forces the
-    # portable one so that it is exercised somewhere. Windows must not: it is
-    # the one case-insensitive platform, where the library only indexes if the
-    # shell can fold case cheaply, so forcing the portable mangling there would
-    # disable indexing rather than cover it.
+    # Running under bash selects the bash-specific key mangling and case
+    # folding, which `runfiles_sh_under_bash_test` covers on Linux. macOS
+    # forces the portable variants so that they are exercised somewhere.
+    # Windows must not: it is the one case-insensitive platform, where the
+    # library only indexes if the shell can fold case cheaply, so forcing the
+    # portable variants there would disable indexing rather than cover it.
     env = select({
         "@platforms//os:macos": {
             "RUNFILES_LIBRARY_FILE": "$(rlocationpath //shell/runfiles:runfiles_sh)",
