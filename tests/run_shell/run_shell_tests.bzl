@@ -8,9 +8,13 @@ load(
     "command_in_exec_group",
     "command_list",
     "command_no_arguments",
+    "command_of_given_length",
     "command_string",
+    "command_with_optional_toolchain",
+    "command_with_other_toolchain",
     "command_with_resource_set",
     "command_with_tools",
+    "command_without_toolchain",
     "env_and_execution_requirements",
     "invalid_mnemonic",
     "lazy_args",
@@ -264,11 +268,16 @@ def _test_two_run_shell_calls_impl(env, target):
     spawn2 = env.expect.that_target(target).action_named("Mnemonic2")
     env.expect.that_bool(_passes_command_inline(spawn2, "echo yyy6999 ;")).equals(False)
 
-# Execution platforms with different maximum command lengths.
+# Execution platforms with different maximum command lengths and shell exec
+# toolchains with recognizable paths.
 _LINUX_AND_WINDOWS_EXEC = {
     "//command_line_option:extra_execution_platforms": [
         "//tests/run_shell:linux_exec",
         "//tests/run_shell:windows_exec",
+    ],
+    "//command_line_option:extra_toolchains": [
+        "//tests/run_shell:custom_linux_sh_exec_toolchain",
+        "//tests/run_shell:custom_windows_sh_exec_toolchain",
     ],
 }
 
@@ -292,6 +301,7 @@ def _test_exec_group(name):
 def _test_exec_group_impl(env, target):
     # The given exec group resolves to a Windows execution platform.
     spawn = env.expect.that_target(target).action_named("ExecGroupMnemonic")
+    env.expect.that_str(spawn.actual.argv[0]).equals("C:/custom/windows/bash.exe")
     env.expect.that_bool(_passes_command_inline(spawn, "echo zzz999 ;")).equals(False)
 
 def _test_default_exec_group(name):
@@ -310,6 +320,7 @@ def _test_default_exec_group(name):
 def _test_default_exec_group_impl(env, target):
     # Without an exec group, the default exec group is used.
     spawn = env.expect.that_target(target).action_named("ExecGroupMnemonic")
+    env.expect.that_str(spawn.actual.argv[0]).equals("/custom/linux/bash")
     env.expect.that_bool(_passes_command_inline(spawn, "echo zzz999 ;")).equals(True)
 
 def _test_env_and_execution_requirements(name):
@@ -485,6 +496,125 @@ def _test_auto_exec_groups_with_exec_group(name):
         },
     )
 
+def _other_toolchain_test(name, *, auto_exec_groups):
+    util.helper_target(
+        command_with_other_toolchain,
+        name = name + "_subject",
+    )
+    analysis_test(
+        name = name,
+        impl = lambda env, target: _other_toolchain_test_impl(env, target, auto_exec_groups = auto_exec_groups),
+        target = name + "_subject",
+        config_settings = _LINUX_AND_WINDOWS_EXEC | {
+            "//command_line_option:extra_toolchains": _LINUX_AND_WINDOWS_EXEC["//command_line_option:extra_toolchains"] + [
+                "//tests/run_shell:windows_only_toolchain",
+            ],
+            "//command_line_option:incompatible_auto_exec_groups": auto_exec_groups,
+        },
+    )
+
+def _other_toolchain_test_impl(env, target, *, auto_exec_groups):
+    # Without automatic exec groups, the action runs on the only execution
+    # platform that has all toolchains of the rule. With them, it runs on the
+    # first execution platform with a shell exec toolchain.
+    spawn = env.expect.that_target(target).action_named("OtherToolchainMnemonic")
+    env.expect.that_str(spawn.actual.argv[0]).equals(
+        "/custom/linux/bash" if auto_exec_groups else "C:/custom/windows/bash.exe",
+    )
+
+def _test_other_toolchain_with_auto_exec_groups(name):
+    _other_toolchain_test(name, auto_exec_groups = True)
+
+def _test_other_toolchain_without_auto_exec_groups(name):
+    _other_toolchain_test(name, auto_exec_groups = False)
+
+def _test_missing_toolchain_rejected(name):
+    util.helper_target(
+        command_without_toolchain,
+        name = name + "_subject",
+    )
+    analysis_test(
+        name = name,
+        impl = _test_missing_toolchain_rejected_impl,
+        target = name + "_subject",
+        expect_failure = True,
+    )
+
+def _test_missing_toolchain_rejected_impl(env, target):
+    env.expect.that_target(target).failures().contains_predicate(
+        matching.str_matches("*run_shell requires the shell exec toolchain type to be declared on the rule or aspect*"),
+    )
+
+def _test_missing_toolchain_in_exec_group_rejected(name):
+    util.helper_target(
+        command_without_toolchain,
+        name = name + "_subject",
+        use_exec_group = "no_toolchain",
+    )
+    analysis_test(
+        name = name,
+        impl = _test_missing_toolchain_in_exec_group_rejected_impl,
+        target = name + "_subject",
+        expect_failure = True,
+    )
+
+def _test_missing_toolchain_in_exec_group_rejected_impl(env, target):
+    env.expect.that_target(target).failures().contains_predicate(
+        matching.str_matches("*run_shell requires the shell exec toolchain type to be declared in exec group 'no_toolchain'*"),
+    )
+
+def _test_optional_toolchain_not_found(name):
+    util.helper_target(
+        command_with_optional_toolchain,
+        name = name + "_subject",
+        exec_compatible_with = ["@platforms//os:none"],
+    )
+    analysis_test(
+        name = name,
+        impl = _test_optional_toolchain_not_found_impl,
+        target = name + "_subject",
+        expect_failure = True,
+        config_settings = {
+            "//command_line_option:extra_execution_platforms": [
+                "//tests/run_shell:no_os_exec",
+            ],
+        },
+    )
+
+def _test_optional_toolchain_not_found_impl(env, target):
+    env.expect.that_target(target).failures().contains_predicate(
+        matching.str_matches("*No shell exec toolchain found for the execution platform of this action*"),
+    )
+
+def _command_of_given_length_test(name, *, length, inline):
+    util.helper_target(
+        command_of_given_length,
+        name = name + "_subject",
+        length = length,
+    )
+    analysis_test(
+        name = name,
+        impl = lambda env, target: _command_of_given_length_test_impl(env, target, length = length, inline = inline),
+        target = name + "_subject",
+        config_settings = {
+            "//command_line_option:extra_toolchains": [
+                "//tests/run_shell:short_sh_exec_toolchain",
+            ],
+        },
+    )
+
+def _command_of_given_length_test_impl(env, target, *, length, inline):
+    # Commands up to and including the max_command_length of the toolchain are
+    # passed inline.
+    spawn = env.expect.that_target(target).action_named("CommandOfGivenLength")
+    env.expect.that_bool(_passes_command_inline(spawn, "#" * length)).equals(inline)
+
+def _test_command_at_max_length(name):
+    _command_of_given_length_test(name, length = 10, inline = True)
+
+def _test_command_above_max_length(name):
+    _command_of_given_length_test(name, length = 11, inline = False)
+
 def _default_shell_test(name, *, os):
     util.helper_target(
         command_no_arguments,
@@ -495,9 +625,6 @@ def _default_shell_test(name, *, os):
         name = name,
         impl = _default_shell_test_impl,
         target = name + "_subject",
-        attrs = {
-            "_windows_constraint": attr.label(default = "@platforms//os:windows"),
-        },
         config_settings = {
             "//command_line_option:extra_execution_platforms": [
                 "//tests/run_shell:%s_exec" % os,
@@ -506,17 +633,10 @@ def _default_shell_test(name, *, os):
     )
 
 def _default_shell_test_impl(env, target):
-    # Not the host OS of any CI platform, so the default shell path is used...
+    # Not the host OS of any CI platform, so the default shell path is used,
+    # also on Windows hosts, where Bazel always sets BAZEL_SH.
     action = env.expect.that_target(target).action_generating("{package}/{name}.out")
-    windows_constraint = env.ctx.attr._windows_constraint[platform_common.ConstraintValueInfo]
-    if not env.ctx.target_platform_has_constraint(windows_constraint):
-        env.expect.that_str(action.actual.argv[0]).equals("/usr/local/bin/bash")
-        return
-
-    # UNDESIRED: ...except on Windows hosts: Bazel always sets BAZEL_SH there,
-    # which makes the native implementation use the host's shell on all exec
-    # platforms.
-    env.expect.that_str(action.actual.argv[0]).contains("bash.exe")
+    env.expect.that_str(action.actual.argv[0]).equals("/usr/local/bin/bash")
 
 def _test_default_shell_freebsd(name):
     _default_shell_test(name, os = "freebsd")
@@ -583,6 +703,13 @@ def run_shell_test_suite(name):
             _test_unknown_exec_group_rejected,
             _test_auto_exec_groups,
             _test_auto_exec_groups_with_exec_group,
+            _test_other_toolchain_with_auto_exec_groups,
+            _test_other_toolchain_without_auto_exec_groups,
+            _test_missing_toolchain_rejected,
+            _test_missing_toolchain_in_exec_group_rejected,
+            _test_optional_toolchain_not_found,
+            _test_command_at_max_length,
+            _test_command_above_max_length,
             _test_default_shell_freebsd,
             _test_default_shell_openbsd,
             _test_resource_set,

@@ -12,9 +12,20 @@
 # See the License for the specific language governing permissions and
 # limitations under the License.
 
-"""A wrapper around `ctx.actions.run_shell`.
+"""A wrapper around `ctx.actions.run` that runs a shell command.
 
-This currently forwards to the native `ctx.actions.run_shell` function.
+This mirrors the behavior of the native `ctx.actions.run_shell` function.
+
+Rules calling `run_shell` must depend on the shell exec toolchain via
+`toolchains = [SH_EXEC_TOOLCHAIN_TYPE]` (loaded from
+`@rules_shell//shell/toolchains:sh_exec_toolchain.bzl`).
+
+Unlike the native function, `run_shell` doesn't accept the `toolchain` and
+`input_manifests` parameters. The action always uses the execution platform
+selected for the shell exec toolchain. With `--incompatible_auto_exec_groups`,
+a command that also uses tools from other toolchains should run in an exec group
+that requires all of these toolchain types, passed as `exec_group`. These tools
+then also have to be obtained from `ctx.exec_groups[<exec_group>].toolchains`.
 """
 
 load("//shell/private:run_shell.bzl", _run_shell = "run_shell")

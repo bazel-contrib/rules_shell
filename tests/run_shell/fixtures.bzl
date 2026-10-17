@@ -1,6 +1,7 @@
 """Rules under test that exercise the `run_shell` function."""
 
 load("//shell:run_shell.bzl", "run_shell")
+load("//shell/toolchains:sh_exec_toolchain.bzl", "SH_EXEC_TOOLCHAIN_TYPE")
 
 def _command_string_impl(ctx):
     out_a = ctx.actions.declare_file(ctx.label.name + "_a.txt")
@@ -20,6 +21,7 @@ def _command_string_impl(ctx):
 command_string = rule(
     implementation = _command_string_impl,
     attrs = {"srcs": attr.label_list(allow_files = True)},
+    toolchains = [SH_EXEC_TOOLCHAIN_TYPE],
 )
 
 def _command_no_arguments_impl(ctx):
@@ -34,6 +36,7 @@ def _command_no_arguments_impl(ctx):
 command_no_arguments = rule(
     implementation = _command_no_arguments_impl,
     attrs = {},
+    toolchains = [SH_EXEC_TOOLCHAIN_TYPE],
 )
 
 def _command_with_tools_impl(ctx):
@@ -53,6 +56,7 @@ command_with_tools = rule(
         "tool": attr.label(allow_files = True, cfg = "exec"),
         "tool_in_inputs": attr.bool(default = False),
     },
+    toolchains = [SH_EXEC_TOOLCHAIN_TYPE],
 )
 
 def _command_list_impl(ctx):
@@ -68,6 +72,7 @@ def _command_list_impl(ctx):
 command_list = rule(
     implementation = _command_list_impl,
     attrs = {},
+    toolchains = [SH_EXEC_TOOLCHAIN_TYPE],
 )
 
 def _invalid_mnemonic_impl(ctx):
@@ -83,6 +88,7 @@ def _invalid_mnemonic_impl(ctx):
 invalid_mnemonic = rule(
     implementation = _invalid_mnemonic_impl,
     attrs = {},
+    toolchains = [SH_EXEC_TOOLCHAIN_TYPE],
 )
 
 def _lazy_args_impl(ctx):
@@ -101,6 +107,7 @@ def _lazy_args_impl(ctx):
 lazy_args = rule(
     implementation = _lazy_args_impl,
     attrs = {},
+    toolchains = [SH_EXEC_TOOLCHAIN_TYPE],
 )
 
 def _long_command_impl(ctx):
@@ -120,6 +127,7 @@ def _long_command_impl(ctx):
 long_command = rule(
     implementation = _long_command_impl,
     attrs = {},
+    toolchains = [SH_EXEC_TOOLCHAIN_TYPE],
 )
 
 def _medium_command_impl(ctx):
@@ -142,6 +150,7 @@ def _medium_command_impl(ctx):
 medium_command = rule(
     implementation = _medium_command_impl,
     attrs = {},
+    toolchains = [SH_EXEC_TOOLCHAIN_TYPE],
 )
 
 def _two_long_commands_impl(ctx):
@@ -172,6 +181,7 @@ def _two_long_commands_impl(ctx):
 two_long_commands = rule(
     implementation = _two_long_commands_impl,
     attrs = {},
+    toolchains = [SH_EXEC_TOOLCHAIN_TYPE],
 )
 
 def _command_in_exec_group_impl(ctx):
@@ -198,8 +208,10 @@ command_in_exec_group = rule(
     exec_groups = {
         "windows": exec_group(
             exec_compatible_with = ["@platforms//os:windows"],
+            toolchains = [SH_EXEC_TOOLCHAIN_TYPE],
         ),
     },
+    toolchains = [SH_EXEC_TOOLCHAIN_TYPE],
 )
 
 def _env_and_execution_requirements_impl(ctx):
@@ -217,6 +229,7 @@ def _env_and_execution_requirements_impl(ctx):
 
 env_and_execution_requirements = rule(
     implementation = _env_and_execution_requirements_impl,
+    toolchains = [SH_EXEC_TOOLCHAIN_TYPE],
 )
 
 def _lazy_args_with_param_file_impl(ctx):
@@ -235,6 +248,7 @@ def _lazy_args_with_param_file_impl(ctx):
 
 lazy_args_with_param_file = rule(
     implementation = _lazy_args_with_param_file_impl,
+    toolchains = [SH_EXEC_TOOLCHAIN_TYPE],
 )
 
 def _tuple_arguments_impl(ctx):
@@ -252,6 +266,7 @@ def _tuple_arguments_impl(ctx):
 
 tuple_arguments = rule(
     implementation = _tuple_arguments_impl,
+    toolchains = [SH_EXEC_TOOLCHAIN_TYPE],
 )
 
 def _string_arguments_impl(ctx):
@@ -267,6 +282,7 @@ def _string_arguments_impl(ctx):
 
 string_arguments = rule(
     implementation = _string_arguments_impl,
+    toolchains = [SH_EXEC_TOOLCHAIN_TYPE],
 )
 
 def _no_outputs_impl(ctx):
@@ -280,6 +296,7 @@ def _no_outputs_impl(ctx):
 
 no_outputs = rule(
     implementation = _no_outputs_impl,
+    toolchains = [SH_EXEC_TOOLCHAIN_TYPE],
 )
 
 def _string_outputs_impl(ctx):
@@ -293,6 +310,7 @@ def _string_outputs_impl(ctx):
 
 string_outputs = rule(
     implementation = _string_outputs_impl,
+    toolchains = [SH_EXEC_TOOLCHAIN_TYPE],
 )
 
 def _resource_set(_os, _inputs_size):
@@ -313,4 +331,75 @@ def _command_with_resource_set_impl(ctx):
 command_with_resource_set = rule(
     implementation = _command_with_resource_set_impl,
     attrs = {"valid": attr.bool(default = True)},
+    toolchains = [SH_EXEC_TOOLCHAIN_TYPE],
+)
+
+def _command_without_toolchain_impl(ctx):
+    out = ctx.actions.declare_file(ctx.label.name + ".out")
+    run_shell(
+        ctx,
+        outputs = [out],
+        command = "echo foo > " + out.path,
+        exec_group = ctx.attr.use_exec_group or None,
+    )
+    return [DefaultInfo(files = depset([out]))]
+
+# Neither the rule nor its exec group declare the shell exec toolchain type.
+command_without_toolchain = rule(
+    implementation = _command_without_toolchain_impl,
+    attrs = {"use_exec_group": attr.string()},
+    exec_groups = {
+        "no_toolchain": exec_group(),
+    },
+)
+
+def _command_with_optional_toolchain_impl(ctx):
+    out = ctx.actions.declare_file(ctx.label.name + ".out")
+    run_shell(
+        ctx,
+        outputs = [out],
+        command = "echo foo > " + out.path,
+    )
+    return [DefaultInfo(files = depset([out]))]
+
+command_with_optional_toolchain = rule(
+    implementation = _command_with_optional_toolchain_impl,
+    toolchains = [config_common.toolchain_type(SH_EXEC_TOOLCHAIN_TYPE, mandatory = False)],
+)
+
+def _command_of_given_length_impl(ctx):
+    out = ctx.actions.declare_file(ctx.label.name + ".out")
+    command = "#" * ctx.attr.length
+    run_shell(
+        ctx,
+        outputs = [out],
+        command = command,
+        mnemonic = "CommandOfGivenLength",
+    )
+    return [DefaultInfo(files = depset([out]))]
+
+command_of_given_length = rule(
+    implementation = _command_of_given_length_impl,
+    attrs = {"length": attr.int(mandatory = True)},
+    toolchains = [SH_EXEC_TOOLCHAIN_TYPE],
+)
+
+def _command_with_other_toolchain_impl(ctx):
+    out = ctx.actions.declare_file(ctx.label.name + ".out")
+    run_shell(
+        ctx,
+        outputs = [out],
+        command = "echo foo > " + out.path,
+        mnemonic = "OtherToolchainMnemonic",
+    )
+    return [DefaultInfo(files = depset([out]))]
+
+# Also requires a toolchain that is only available on Windows execution
+# platforms.
+command_with_other_toolchain = rule(
+    implementation = _command_with_other_toolchain_impl,
+    toolchains = [
+        SH_EXEC_TOOLCHAIN_TYPE,
+        "//tests/run_shell:windows_only_toolchain_type",
+    ],
 )

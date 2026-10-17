@@ -8,6 +8,7 @@ long commands) without a Bazel-in-Bazel integration test.
 
 load("@with_cfg.bzl", "with_cfg")
 load("//shell:run_shell.bzl", "run_shell")
+load("//shell/toolchains:sh_exec_toolchain.bzl", "SH_EXEC_TOOLCHAIN_TYPE", "ShExecToolchainInfo")
 
 def _run_shell_output_impl(ctx):
     out = ctx.actions.declare_file(ctx.label.name + ".out")
@@ -36,6 +37,7 @@ run_shell_output = rule(
         "long": attr.bool(),
         "use_default_shell_env": attr.bool(),
     },
+    toolchains = [SH_EXEC_TOOLCHAIN_TYPE],
 )
 
 # Same as run_shell_output, but transitions --action_env so that targets can
@@ -87,6 +89,7 @@ run_shell_script_args = rule(
     attrs = {
         "forward_arguments": attr.bool(),
     },
+    toolchains = [SH_EXEC_TOOLCHAIN_TYPE],
 )
 
 def _run_shell_helper_script_args_impl(ctx):
@@ -113,6 +116,7 @@ run_shell_helper_script_args = rule(
     attrs = {
         "long": attr.bool(),
     },
+    toolchains = [SH_EXEC_TOOLCHAIN_TYPE],
 )
 
 def _run_shell_long_output_impl(ctx):
@@ -135,6 +139,7 @@ def _run_shell_long_output_impl(ctx):
 
 run_shell_long_output = rule(
     implementation = _run_shell_long_output_impl,
+    toolchains = [SH_EXEC_TOOLCHAIN_TYPE],
 )
 
 def _run_shell_param_file_args_impl(ctx):
@@ -162,6 +167,7 @@ run_shell_param_file_args = rule(
     attrs = {
         "long": attr.bool(),
     },
+    toolchains = [SH_EXEC_TOOLCHAIN_TYPE],
 )
 
 # Arguments that are easily mangled on their way to the shell, in particular
@@ -214,6 +220,7 @@ run_shell_arguments_as_command = rule(
         "command": attr.string(mandatory = True),
         "long": attr.bool(),
     },
+    toolchains = [SH_EXEC_TOOLCHAIN_TYPE],
 )
 
 def _run_shell_tool_output_impl(ctx):
@@ -248,6 +255,7 @@ run_shell_tool_output = rule(
             values = ["depset", "file", "files_to_run"],
         ),
     },
+    toolchains = [SH_EXEC_TOOLCHAIN_TYPE],
 )
 
 def _run_shell_three_commands_impl(ctx):
@@ -279,6 +287,7 @@ def _run_shell_three_commands_impl(ctx):
 # implementation, then concatenates their outputs.
 run_shell_three_commands = rule(
     implementation = _run_shell_three_commands_impl,
+    toolchains = [SH_EXEC_TOOLCHAIN_TYPE],
 )
 
 def _run_shell_with_env_and_input_impl(ctx):
@@ -303,6 +312,7 @@ run_shell_with_env_and_input = rule(
     attrs = {
         "src": attr.label(allow_single_file = True, mandatory = True),
     },
+    toolchains = [SH_EXEC_TOOLCHAIN_TYPE],
 )
 
 RunShellAspectInfo = provider(
@@ -345,6 +355,7 @@ _run_shell_aspect = aspect(
             default = ":aspect_input.txt",
         ),
     },
+    toolchains = [SH_EXEC_TOOLCHAIN_TYPE],
 )
 
 def _run_shell_aspect_output_impl(ctx):
@@ -398,4 +409,31 @@ shift
 # Expands a tree artifact in an Args object passed to the command.
 run_shell_tree_artifact_args = rule(
     implementation = _run_shell_tree_artifact_args_impl,
+    toolchains = [SH_EXEC_TOOLCHAIN_TYPE],
+)
+
+def _files_to_run_sh_exec_toolchain_impl(ctx):
+    return [
+        platform_common.ToolchainInfo(
+            sh_exec_toolchain = ShExecToolchainInfo(
+                interpreter = ctx.attr.interpreter[DefaultInfo].files_to_run,
+                max_command_length = ctx.attr.max_command_length,
+            ),
+        ),
+    ]
+
+# A shell exec toolchain with an interpreter built from a target, as opposed to
+# an absolute path.
+files_to_run_sh_exec_toolchain = rule(
+    implementation = _files_to_run_sh_exec_toolchain_impl,
+    attrs = {
+        "interpreter": attr.label(cfg = "exec", executable = True, mandatory = True),
+        "max_command_length": attr.int(mandatory = True),
+    },
+)
+
+run_shell_output_with_files_to_run_interpreter, _run_shell_output_with_files_to_run_interpreter = (
+    with_cfg(run_shell_output)
+        .extend("extra_toolchains", [str(Label(":files_to_run_sh_exec_toolchain"))])
+        .build()
 )

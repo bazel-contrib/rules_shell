@@ -1,13 +1,16 @@
 load("@bazel_skylib//rules:diff_test.bzl", "diff_test")
 load("//shell:sh_binary.bzl", "sh_binary")
+load("//shell/toolchains:sh_exec_toolchain.bzl", "sh_exec_toolchain")
 load(
     ":exec_fixtures.bzl",
+    "files_to_run_sh_exec_toolchain",
     "run_shell_arguments_as_command",
     "run_shell_aspect_output",
     "run_shell_helper_script_args",
     "run_shell_long_output",
     "run_shell_output",
     "run_shell_output_with_action_env",
+    "run_shell_output_with_files_to_run_interpreter",
     "run_shell_param_file_args",
     "run_shell_script_args",
     "run_shell_three_commands",
@@ -37,6 +40,62 @@ platform(
 platform(
     name = "openbsd_exec",
     constraint_values = ["@platforms//os:openbsd"],
+)
+
+# No shell exec toolchain is registered for this platform.
+platform(
+    name = "no_os_exec",
+    constraint_values = ["@platforms//os:none"],
+)
+
+# Shell exec toolchains with recognizable paths and limits, used by the
+# analysis tests via --extra_toolchains.
+sh_exec_toolchain(
+    name = "custom_linux_sh_exec",
+    max_command_length = 64000,
+    path = "/custom/linux/bash",
+)
+
+toolchain(
+    name = "custom_linux_sh_exec_toolchain",
+    exec_compatible_with = ["@platforms//os:linux"],
+    toolchain = ":custom_linux_sh_exec",
+    toolchain_type = "//shell:exec_toolchain_type",
+)
+
+sh_exec_toolchain(
+    name = "custom_windows_sh_exec",
+    max_command_length = 8000,
+    path = "C:/custom/windows/bash.exe",
+)
+
+toolchain(
+    name = "custom_windows_sh_exec_toolchain",
+    exec_compatible_with = ["@platforms//os:windows"],
+    toolchain = ":custom_windows_sh_exec",
+    toolchain_type = "//shell:exec_toolchain_type",
+)
+
+# A toolchain type that only has a toolchain for Windows execution platforms.
+toolchain_type(name = "windows_only_toolchain_type")
+
+toolchain(
+    name = "windows_only_toolchain",
+    exec_compatible_with = ["@platforms//os:windows"],
+    toolchain = ":custom_windows_sh_exec",
+    toolchain_type = ":windows_only_toolchain_type",
+)
+
+sh_exec_toolchain(
+    name = "short_sh_exec",
+    max_command_length = 10,
+    path = "/bin/bash",
+)
+
+toolchain(
+    name = "short_sh_exec_toolchain",
+    toolchain = ":short_sh_exec",
+    toolchain_type = "//shell:exec_toolchain_type",
 )
 
 run_shell_output(
@@ -120,10 +179,9 @@ diff_test(
     file2 = "helper_script_args_inline.golden",
 )
 
-# ...and the same command spilled into a helper script should behave
-# identically.
-# UNDESIRED: $1 is empty since the helper script doesn't receive `arguments`
-# (https://github.com/bazelbuild/bazel/issues/29365).
+# ...and the same command spilled into a helper script behaves identically:
+# run_shell forwards `arguments` into the helper script, fixing
+# https://github.com/bazelbuild/bazel/issues/29365.
 run_shell_helper_script_args(
     name = "helper_script_args_spilled",
     long = True,
@@ -211,8 +269,6 @@ diff_test(
     )
     for variant, golden in [
         ("inline", "param_file_args.golden"),
-        # UNDESIRED: The spilled command doesn't receive `arguments`
-        # (https://github.com/bazelbuild/bazel/issues/29365).
         ("spilled", "param_file_args_spilled.golden"),
     ]
 ]
@@ -243,9 +299,6 @@ diff_test(
     for name, golden in [
         ("inline", "arguments_as_command.golden"),
         ("inline_trailing_space", "arguments_as_command.golden"),
-        # UNDESIRED: The spilled command doesn't receive `arguments` and thus
-        # doesn't run anything
-        # (https://github.com/bazelbuild/bazel/issues/29365).
         ("spilled", "arguments_as_command_spilled.golden"),
     ]
 ]
@@ -274,8 +327,6 @@ diff_test(
     )
     for variant, golden in [
         ("inline", "unicode.golden"),
-        # UNDESIRED: The spilled command doesn't receive `arguments`
-        # (https://github.com/bazelbuild/bazel/issues/29365).
         ("spilled", "unicode_spilled.golden"),
     ]
 ]
@@ -372,3 +423,57 @@ diff_test(
     file1 = ":tree_artifact_args",
     file2 = "tree_artifact_args.golden",
 )
+
+# A shell exec toolchain can provide an interpreter built by Bazel.
+sh_binary(
+    name = "interpreter",
+    srcs = ["interpreter.sh"],
+    data = ["interpreter_data.txt"],
+    deps = ["//shell/runfiles"],
+)
+
+files_to_run_sh_exec_toolchain(
+    name = "files_to_run_sh_exec",
+    interpreter = ":interpreter",
+    max_command_length = 64000,
+)
+
+toolchain(
+    name = "files_to_run_sh_exec_toolchain",
+    toolchain = ":files_to_run_sh_exec",
+    toolchain_type = "//shell:exec_toolchain_type",
+)
+
+[
+    run_shell_output_with_files_to_run_interpreter(
+        name = "files_to_run_interpreter_" + variant,
+        command = "echo \"$INTERPRETER $2\" > $1",
+        extra_arguments = ["the_argument"],
+        long = variant == "spilled",
+        # UNDESIRED: Before Bazel 10, the sh_binary launcher on Windows splices
+        # arguments into a command string for bash, which expands the variables
+        # in the inline command
+        # (https://github.com/bazelbuild/bazel/commit/aa3eebd).
+        target_compatible_with = select({
+            "@platforms//os:windows": ["@platforms//:incompatible"],
+            "//conditions:default": [],
+        }) if variant == "inline" else [],
+    )
+    for variant in [
+        "inline",
+        "spilled",
+    ]
+]
+
+[
+    diff_test(
+        name = "files_to_run_interpreter_%s_test" % variant,
+        size = "small",
+        file1 = ":files_to_run_interpreter_" + variant,
+        file2 = "files_to_run_interpreter.golden",
+    )
+    for variant in [
+        "inline",
+        "spilled",
+    ]
+]

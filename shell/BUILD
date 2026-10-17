@@ -1,19 +1,42 @@
+load("@bazel_skylib//:bzl_library.bzl", "bzl_library")
+
 # A runtime toolchain for shell scripts.
 #
-# Use `sh_toolchain` to register a toolchain for this type.
+# Used at runtime by sh_binary and sh_test targets.
+#
+# Register `sh_toolchain` targets for this type.
 #
 # Every toolchain registered for this type has the following attributes:
 # - `path`: The path to the shell interpreter for the target platform.
 #
-# Other attribute may be present but are considered implementation details of
+# Other attributes may be present but are considered implementation details of
 # Bazel's sh_* rules.
 #
 # Toolchains registered for this type should have target constraints.
-
-load("@bazel_skylib//:bzl_library.bzl", "bzl_library")
-
 toolchain_type(
     name = "toolchain_type",
+    visibility = ["//visibility:public"],
+)
+
+# An exec toolchain for shell commands.
+#
+# Used in rule implementations that use `run_shell` to run shell commands at build time.
+#
+# Register `sh_exec_toolchain` targets for this type.
+#
+# Every toolchain registered for this type has a `sh_exec_toolchain` attribute
+# holding a `ShExecToolchainInfo` (see `sh_exec_toolchain.bzl`) with the
+# following fields:
+# - `interpreter`: The shell interpreter for the execution platform, either as
+#   an absolute path or as a `FilesToRunProvider`.
+# - `max_command_length`: The maximum command length before spilling to a helper script.
+#
+# Other attributes may be present but are considered implementation details of
+# the `run_shell` implementation.
+#
+# Toolchains registered for this type should have exec constraints.
+toolchain_type(
+    name = "exec_toolchain_type",
     visibility = ["//visibility:public"],
 )
 
@@ -46,5 +69,6 @@ bzl_library(
         "//shell/private:private_bzl",
         "//shell/private/repositories:bazel_tools_bzl",
         "//shell/private/repositories:repositories_bzl",
+        "//shell/toolchains:toolchains_bzl",
     ],
 )

@@ -38,6 +38,4 @@ function check_greeting() {
 }
 
 check_greeting inline "hello from run_shell"
-# UNDESIRED: The spilled command doesn't receive `arguments`
-# (https://github.com/bazelbuild/bazel/issues/29365).
-check_greeting spilled ""
+check_greeting spilled "hello from run_shell"

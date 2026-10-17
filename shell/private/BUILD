@@ -11,4 +11,5 @@ bzl_library(
         "sh_test.bzl",
     ],
     visibility = ["//shell:__pkg__"],
+    deps = ["//shell/toolchains:toolchains_bzl"],
 )

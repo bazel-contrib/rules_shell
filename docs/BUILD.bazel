@@ -50,6 +50,13 @@ stardoc(
 )
 
 stardoc(
+    name = "sh_exec_toolchain",
+    out = "sh_exec_toolchain.md",
+    input = "//shell/toolchains:sh_exec_toolchain.bzl",
+    deps = ["//shell/toolchains:toolchains_bzl"],
+)
+
+stardoc(
     name = "repositories",
     out = "repositories.md",
     input = "//shell:repositories.bzl",
@@ -63,6 +70,7 @@ filegroup(
         ":run_shell.md",
         ":sh_binary.md",
         ":sh_binary_info.md",
+        ":sh_exec_toolchain.md",
         ":sh_info.md",
         ":sh_library.md",
         ":sh_test.md",

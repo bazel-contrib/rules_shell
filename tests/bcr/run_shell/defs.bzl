@@ -1,6 +1,7 @@
 """A rule that writes a greeting with `run_shell`."""
 
 load("@rules_shell//shell:run_shell.bzl", "run_shell")
+load("@rules_shell//shell/toolchains:sh_exec_toolchain.bzl", "SH_EXEC_TOOLCHAIN_TYPE")
 
 def _greeting_impl(ctx):
     out = ctx.actions.declare_file(ctx.label.name + ".txt")
@@ -24,4 +25,5 @@ greeting = rule(
     attrs = {
         "spill": attr.bool(),
     },
+    toolchains = [SH_EXEC_TOOLCHAIN_TYPE],
 )
