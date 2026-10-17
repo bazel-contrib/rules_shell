@@ -1,0 +1,30 @@
+load("@shell_rules//shell:sh_binary.bzl", "sh_binary")
+
+exports_files(
+    ["data.txt"],
+    visibility = ["//visibility:public"],
+)
+
+genrule(
+    name = "gen_current_repository_sh",
+    srcs = ["current_repository.sh"],
+    outs = ["gen_current_repository.sh"],
+    cmd = "cp $< $@",
+)
+
+[
+    sh_binary(
+        name = name,
+        srcs = [src],
+        data = [
+            "data.txt",
+            "@shell_rules//tests/runfiles:main_data.txt",
+        ],
+        visibility = ["//visibility:public"],
+        deps = ["@shell_rules//shell/runfiles"],
+    )
+    for name, src in [
+        ("current_repository", "current_repository.sh"),
+        ("gen_current_repository", ":gen_current_repository_sh"),
+    ]
+]

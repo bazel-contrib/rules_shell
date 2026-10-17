@@ -1,0 +1,5 @@
+module(name = "rules_shell_test_other_module")
+
+# Uses a different apparent name than the main repository to verify that
+# runfiles paths are resolved with the repository mapping of the caller.
+bazel_dep(name = "rules_shell", repo_name = "shell_rules")

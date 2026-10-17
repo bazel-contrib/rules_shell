@@ -1,1 +1,3 @@
 tests/bcr
+# A separate module used by tests/runfiles.
+tests/runfiles/other_module
