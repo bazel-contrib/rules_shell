@@ -20,6 +20,7 @@ toolchain_type(
 exports_files(
     [
         "repositories.bzl",
+        "run_shell.bzl",
         "sh_binary.bzl",
         "sh_binary_info.bzl",
         "sh_info.bzl",
@@ -33,6 +34,7 @@ bzl_library(
     name = "rules_bzl",
     srcs = [
         "repositories.bzl",
+        "run_shell.bzl",
         "sh_binary.bzl",
         "sh_binary_info.bzl",
         "sh_info.bzl",
