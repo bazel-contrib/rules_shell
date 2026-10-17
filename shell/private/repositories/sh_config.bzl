@@ -29,7 +29,7 @@ sh_toolchain(
     path = {sh_path},
 )
 
-sh_exec_toolchain(
+default_sh_exec_toolchain(
     name = "{os}_sh_exec",
     path = {sh_path},
     max_command_length = 64000,
@@ -44,7 +44,7 @@ sh_toolchain(
     launcher_maker = "@bazel_tools//tools/launcher:launcher_maker",
 )
 
-sh_exec_toolchain(
+default_sh_exec_toolchain(
     name = "{os}_sh_exec",
     path = {sh_path},
     max_command_length = 8000,
@@ -106,7 +106,8 @@ def _sh_config_impl(repository_ctx):
 
     repository_ctx.file("BUILD", """
 load("@rules_shell//shell/toolchains:sh_toolchain.bzl", "sh_toolchain", "SH_TOOLCHAIN_TYPE")
-load("@rules_shell//shell/toolchains:sh_exec_toolchain.bzl", "sh_exec_toolchain", "SH_EXEC_TOOLCHAIN_TYPE")
+load("@rules_shell//shell/toolchains:sh_exec_toolchain.bzl", "SH_EXEC_TOOLCHAIN_TYPE")
+load("@rules_shell//shell/private:default_sh_exec_toolchain.bzl", "default_sh_exec_toolchain")
 """ + "\n".join(toolchains))
 
     if hasattr(repository_ctx, "repo_metadata"):

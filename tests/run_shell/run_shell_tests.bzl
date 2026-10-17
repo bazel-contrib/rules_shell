@@ -677,6 +677,44 @@ def _test_invalid_resource_set_rejected_impl(env, target):
         matching.str_matches("*parameter 'resource_set' got value of type 'string'*"),
     )
 
+def _shell_executable_test(name, *, custom_toolchains):
+    util.helper_target(
+        command_in_exec_group,
+        name = name + "_subject",
+        use_exec_group = "windows",
+        exec_compatible_with = ["@platforms//os:linux"],
+    )
+    config_settings = {
+        "//command_line_option:extra_execution_platforms": [
+            "//tests/run_shell:linux_exec",
+            "//tests/run_shell:windows_exec",
+        ],
+        "//command_line_option:shell_executable": "/shell/executable/bash",
+    }
+    if custom_toolchains:
+        config_settings = _LINUX_AND_WINDOWS_EXEC | config_settings
+    analysis_test(
+        name = name,
+        impl = lambda env, target: _shell_executable_test_impl(env, target, custom_toolchains = custom_toolchains),
+        target = name + "_subject",
+        config_settings = config_settings,
+    )
+
+def _shell_executable_test_impl(env, target, *, custom_toolchains):
+    # The shell executable replaces the path of the default toolchains, but not
+    # their maximum command length, and doesn't affect registered toolchains.
+    spawn = env.expect.that_target(target).action_named("ExecGroupMnemonic")
+    env.expect.that_str(spawn.actual.argv[0]).equals(
+        "C:/custom/windows/bash.exe" if custom_toolchains else "/shell/executable/bash",
+    )
+    env.expect.that_bool(_passes_command_inline(spawn, "echo zzz999 ;")).equals(False)
+
+def _test_shell_executable_with_default_toolchains(name):
+    _shell_executable_test(name, custom_toolchains = False)
+
+def _test_shell_executable_with_custom_toolchains(name):
+    _shell_executable_test(name, custom_toolchains = True)
+
 def run_shell_test_suite(name):
     test_suite(
         name = name,
@@ -714,5 +752,7 @@ def run_shell_test_suite(name):
             _test_default_shell_openbsd,
             _test_resource_set,
             _test_invalid_resource_set_rejected,
+            _test_shell_executable_with_default_toolchains,
+            _test_shell_executable_with_custom_toolchains,
         ],
     )

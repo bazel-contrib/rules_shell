@@ -26,6 +26,12 @@ selected for the shell exec toolchain. With `--incompatible_auto_exec_groups`,
 a command that also uses tools from other toolchains should run in an exec group
 that requires all of these toolchain types, passed as `exec_group`. These tools
 then also have to be obtained from `ctx.exec_groups[<exec_group>].toolchains`.
+
+The shell exec toolchains registered by rules_shell use the shell set with
+`--shell_executable` on all execution platforms, as the native function does.
+Shell exec toolchains registered by users are not affected by the flag. Setting
+it requires Bazel 7 or later: Bazel 6 fails the analysis of `run_shell` actions
+when the flag is set.
 """
 
 load("//shell/private:run_shell.bzl", _run_shell = "run_shell")
