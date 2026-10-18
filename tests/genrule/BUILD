@@ -15,6 +15,11 @@ genrule_test_suite(name = "genrule_tests")
 
 substitution_test_suite(name = "substitution_tests")
 
+config_setting(
+    name = "dbg",
+    values = {"compilation_mode": "dbg"},
+)
+
 platform(
     name = "linux_exec",
     constraint_values = ["@platforms//os:linux"],

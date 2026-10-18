@@ -4,12 +4,14 @@ load("@rules_testing//lib:analysis_test.bzl", "analysis_test", "test_suite")
 load("@rules_testing//lib:truth.bzl", "matching")
 load("@rules_testing//lib:util.bzl", "util")
 load("//shell:genrule.bzl", "genrule")
+load(":fixtures.bzl", "executable_with_multiple_files", "template_variables")
 
 def _substitution_test(name, *, expected, outs = None, config_settings = {}, **kwargs):
     """Tests that the command expands to `expected`.
 
-    `expected` may refer to `{package}`, the output root `{bindir}`, the test
-    `{name}` and the runfiles `{workspace}` name.
+    `expected` may refer to `{package}`, the output root `{bindir}`, the root
+    of inputs built in the exec configuration `{exec_bindir}`, the test `{name}`
+    and the runfiles `{workspace}` name.
     """
     util.helper_target(
         genrule,
@@ -32,10 +34,18 @@ def _substitution_test(name, *, expected, outs = None, config_settings = {}, **k
 
 def _substitution_test_impl(env, target):
     action = env.expect.that_target(target).action_named("Genrule")
-    _, _, command = action.actual.argv[-1].partition("/genrule-setup.sh; ")
+    command, setup, user_command = action.actual.argv[-1].partition("/genrule-setup.sh; ")
+    if setup:
+        command = user_command
     expected = env.ctx.attr.expected
+    exec_bindirs = [
+        f.root.path
+        for f in action.actual.inputs.to_list()
+        if "-exec" in f.root.path
+    ]
     for key, value in {
         "bindir": target[DefaultInfo].files.to_list()[0].root.path,
+        "exec_bindir": exec_bindirs[0] if exec_bindirs else "<no exec inputs>",
         "name": target.label.name.removesuffix("_subject"),
         "package": target.label.package,
         "workspace": env.ctx.workspace_name,
@@ -548,6 +558,227 @@ def _test_heuristic_label_expansion_of_multiple_files(name):
         error = "expands to 2 files",
     )
 
+def _test_srcs_deduplicated(name):
+    native.filegroup(
+        name = name + "_fg",
+        srcs = [
+            "src.txt",
+            "src2.txt",
+        ],
+        tags = ["manual"],
+    )
+    _substitution_test(
+        name,
+        srcs = [
+            name + "_fg",
+            "src.txt",
+        ],
+        cmd = "$(SRCS)",
+        expected = "{package}/src.txt {package}/src2.txt",
+    )
+
+def _test_dollar_less_than_with_single_file_filegroup(name):
+    native.filegroup(
+        name = name + "_fg",
+        srcs = ["src.txt"],
+        tags = ["manual"],
+    )
+    _substitution_test(
+        name,
+        srcs = [name + "_fg"],
+        cmd = "$< $(location %s_fg)" % name,
+        expected = "{package}/src.txt {package}/src.txt",
+    )
+
+def _test_empty_filegroup_in_srcs(name):
+    native.filegroup(
+        name = name + "_fg",
+        tags = ["manual"],
+    )
+    _substitution_test(
+        name,
+        srcs = [name + "_fg"],
+        cmd = "[$(SRCS)]",
+        expected = "[]",
+    )
+
+def _test_location_of_empty_filegroup_in_srcs(name):
+    native.filegroup(
+        name = name + "_fg",
+        tags = ["manual"],
+    )
+    _substitution_failure_test(
+        name,
+        srcs = [name + "_fg"],
+        cmd = "$(location %s_fg)" % name,
+        error = "label '//tests/genrule:%s_fg' in $(location) expression expands to no files" % name,
+    )
+
+def _test_location_of_executable_with_multiple_files_in_tools(name):
+    util.helper_target(
+        executable_with_multiple_files,
+        name = name + "_executable",
+    )
+    _substitution_test(
+        name,
+        cmd = "$(location %s_executable)" % name,
+        tools = [name + "_executable"],
+        expected = "{exec_bindir}/{package}/{name}_executable.sh",
+    )
+
+def _test_location_of_executable_with_multiple_files_in_srcs(name):
+    util.helper_target(
+        executable_with_multiple_files,
+        name = name + "_executable",
+    )
+    _substitution_failure_test(
+        name,
+        srcs = [name + "_executable"],
+        cmd = "$(location %s_executable)" % name,
+        error = "label '//tests/genrule:%s_executable' in $(location) expression expands to more than one file" % name,
+    )
+
+def _test_location_of_label_in_srcs_and_tools(name):
+    util.helper_target(
+        genrule,
+        name = name + "_both",
+        outs = [name + "_both.out"],
+        cmd = "touch $@",
+    )
+    _substitution_test(
+        name,
+        srcs = [name + "_both"],
+        cmd = "$(locations %s_both)" % name,
+        tools = [name + "_both"],
+        # Expands to the output in both the target and the exec configuration,
+        # sorted by path.
+        config_settings = {
+            "//command_line_option:compilation_mode": "fastbuild",
+        },
+        expected = "{bindir}/{package}/{name}_both.out {exec_bindir}/{package}/{name}_both.out",
+    )
+
+def _test_locations_sorted(name):
+    util.helper_target(
+        genrule,
+        name = name + "_x",
+        outs = [
+            name + "_b.out",
+            name + "_a.out",
+        ],
+        cmd = "touch $(OUTS)",
+    )
+    _substitution_test(
+        name,
+        srcs = [name + "_x"],
+        cmd = "$(locations %s_x) # $(SRCS)" % name,
+        # Unlike $(SRCS) and $(OUTS), $(locations) sorts paths.
+        expected = "{bindir}/{package}/{name}_a.out {bindir}/{package}/{name}_b.out # " +
+                   "{bindir}/{package}/{name}_b.out {bindir}/{package}/{name}_a.out",
+    )
+
+def _alias_test(name, *, attr, label, error = None):
+    util.helper_target(
+        genrule,
+        name = name + "_actual",
+        outs = [name + "_actual.out"],
+        cmd = "touch $@",
+    )
+    native.alias(
+        name = name + "_alias",
+        actual = name + "_actual",
+        tags = ["manual"],
+    )
+    kwargs = {
+        attr: [name + "_alias"],
+        "cmd": "$(location :%s_%s)" % (name, label),
+    }
+    if error:
+        _substitution_failure_test(name, error = error % name, **kwargs)
+    else:
+        _substitution_test(
+            name,
+            expected = "{%s}/{package}/{name}_actual.out" % ("bindir" if attr == "srcs" else "exec_bindir"),
+            **kwargs
+        )
+
+def _test_location_of_alias_in_srcs(name):
+    _alias_test(name, attr = "srcs", label = "alias")
+
+def _test_location_of_alias_in_tools(name):
+    _alias_test(name, attr = "tools", label = "alias")
+
+def _test_location_of_alias_actual_with_alias_in_srcs(name):
+    _alias_test(
+        name,
+        attr = "srcs",
+        label = "actual",
+        error = "label '//tests/genrule:%s_actual' in $(location) expression is not a declared prerequisite of this rule",
+    )
+
+def _test_location_of_alias_actual_with_alias_in_tools(name):
+    # Unlike srcs, tools are also available under the label of the actual
+    # target of an alias.
+    _alias_test(name, attr = "tools", label = "actual")
+
+def _test_location_quotes_paths_with_spaces(name):
+    native.filegroup(
+        name = name + "_fg",
+        srcs = ["hello source.txt"],
+        tags = ["manual"],
+    )
+    _substitution_test(
+        name,
+        srcs = [name + "_fg"],
+        cmd = "$(location {name}_fg) $(execpath {name}_fg) $(rootpath {name}_fg) $(rlocationpath {name}_fg) # $< $(SRCS)".format(
+            name = name,
+        ),
+        # Unlike the location functions, $< and $(SRCS) don't quote paths.
+        expected = "'{package}/hello source.txt' '{package}/hello source.txt' " +
+                   "'{package}/hello source.txt' '{workspace}/{package}/hello source.txt' # " +
+                   "{package}/hello source.txt {package}/hello source.txt",
+    )
+
+def _test_location_in_variable(name):
+    util.helper_target(
+        template_variables,
+        name = name + "_variables",
+        variables = {
+            "ESCAPED": "$$(location :src.txt)",
+            "LOCATION": "$(location :src.txt)",
+        },
+    )
+    _substitution_test(
+        name,
+        srcs = ["src.txt"],
+        cmd = "$$(location :src.txt) $(LOCATION) $(ESCAPED)",
+        toolchains = [name + "_variables"],
+        # Location functions in the values of variables are expanded.
+        expected = "$(location :src.txt) {package}/src.txt $(location :src.txt)",
+    )
+
+def _conflicting_variables_test(name, *, reversed):
+    for value in ["first", "second"]:
+        util.helper_target(
+            template_variables,
+            name = "%s_%s" % (name, value),
+            variables = {"VALUE": value},
+        )
+    toolchains = [name + "_first", name + "_second"]
+    _substitution_test(
+        name,
+        cmd = "$(VALUE)",
+        toolchains = toolchains[::-1] if reversed else toolchains,
+        # The first target in toolchains that provides a variable wins.
+        expected = "second" if reversed else "first",
+    )
+
+def _test_conflicting_variables(name):
+    _conflicting_variables_test(name, reversed = False)
+
+def _test_conflicting_variables_reversed(name):
+    _conflicting_variables_test(name, reversed = True)
+
 def substitution_test_suite(name):
     test_suite(
         name = name,
@@ -606,5 +837,21 @@ def substitution_test_suite(name):
             _test_heuristic_label_expansion_of_single_file,
             _test_heuristic_label_expansion_of_no_files,
             _test_heuristic_label_expansion_of_multiple_files,
+            _test_srcs_deduplicated,
+            _test_dollar_less_than_with_single_file_filegroup,
+            _test_empty_filegroup_in_srcs,
+            _test_location_of_empty_filegroup_in_srcs,
+            _test_location_of_executable_with_multiple_files_in_tools,
+            _test_location_of_executable_with_multiple_files_in_srcs,
+            _test_location_of_label_in_srcs_and_tools,
+            _test_locations_sorted,
+            _test_location_of_alias_in_srcs,
+            _test_location_of_alias_in_tools,
+            _test_location_of_alias_actual_with_alias_in_srcs,
+            _test_location_of_alias_actual_with_alias_in_tools,
+            _test_location_quotes_paths_with_spaces,
+            _test_location_in_variable,
+            _test_conflicting_variables,
+            _test_conflicting_variables_reversed,
         ],
     )

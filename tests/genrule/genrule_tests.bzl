@@ -4,7 +4,13 @@ load("@rules_testing//lib:analysis_test.bzl", "analysis_test", "test_suite")
 load("@rules_testing//lib:truth.bzl", "matching")
 load("@rules_testing//lib:util.bzl", "util")
 load("//shell:genrule.bzl", "genrule")
-load(":fixtures.bzl", "GenruleInputsInfo", "exec_genrule_inputs", "template_variables")
+load(
+    ":fixtures.bzl",
+    "GenruleInputsInfo",
+    "exec_genrule_inputs",
+    "executable_dependency",
+    "template_variables",
+)
 
 _LINUX_EXEC = {
     "//command_line_option:extra_execution_platforms": [
@@ -16,6 +22,15 @@ _WINDOWS_EXEC = {
     "//command_line_option:extra_execution_platforms": [
         "//tests/genrule:windows_exec",
     ],
+}
+
+_DBG = {
+    "//command_line_option:compilation_mode": "dbg",
+}
+
+# Ensures that selects on :dbg resolve to their default condition.
+_FASTBUILD = {
+    "//command_line_option:compilation_mode": "fastbuild",
 }
 
 # The setup that genrule prepends to Powershell commands.
@@ -1025,6 +1040,39 @@ def _test_toolchain_files_are_inputs_impl(env, target):
         _output(target).path,
     ))
 
+def _test_toolchain_files_are_in_target_configuration(name):
+    util.helper_target(
+        template_variables,
+        name = name + "_variables",
+        generated_file_variable = "GENERATED_PATH",
+    )
+    util.helper_target(
+        genrule,
+        name = name + "_subject",
+        outs = [name + ".out"],
+        cmd = "cat $(GENERATED_PATH) > $@",
+        # Writes to the same output directory as the fixture regardless of
+        # whether the genfiles directory is merged into the bin directory.
+        output_to_bindir = True,
+        toolchains = [name + "_variables"],
+    )
+    analysis_test(
+        name = name,
+        impl = _test_toolchain_files_are_in_target_configuration_impl,
+        target = name + "_subject",
+    )
+
+def _test_toolchain_files_are_in_target_configuration_impl(env, target):
+    # Unlike tools, targets in toolchains are in the configuration of the
+    # genrule.
+    action = env.expect.that_target(target).action_named("Genrule")
+    generated = _input(action, _test_name(target) + "_variables.txt")
+    env.expect.that_str(generated.root.path).equals(_output(target).root.path)
+    env.expect.that_str(_command(action)).equals("cat %s > %s" % (
+        generated.path,
+        _output(target).path,
+    ))
+
 def _test_runfiles(name):
     util.helper_target(
         genrule,
@@ -1203,6 +1251,35 @@ def _test_cmd_ps_uses_script_file_impl(env, target):
         "echo \"Hello, Powershell cmd, 1.\" >",
     )
 
+def _test_cmd_bat_quotes_paths_with_spaces(name):
+    native.filegroup(
+        name = name + "_fg",
+        srcs = ["hello source.txt"],
+        tags = ["manual"],
+    )
+    util.helper_target(
+        genrule,
+        name = name + "_subject",
+        srcs = [name + "_fg"],
+        outs = [name + ".txt"],
+        cmd_bat = "$(location %s_fg) # $<" % name,
+        exec_compatible_with = ["@platforms//os:windows"],
+    )
+    analysis_test(
+        name = name,
+        impl = _test_cmd_bat_quotes_paths_with_spaces_impl,
+        target = name + "_subject",
+        config_settings = _WINDOWS_EXEC,
+    )
+
+def _test_cmd_bat_quotes_paths_with_spaces_impl(env, target):
+    action = env.expect.that_target(target).action_named("Genrule")
+
+    # UNDESIRED: Paths with spaces are quoted with single quotes, which cmd.exe
+    # doesn't recognize.
+    path = target.label.package.replace("/", "\\") + "\\hello source.txt"
+    env.expect.that_str(action.actual.argv[-1]).equals("'%s' # %s" % (path, path))
+
 def _test_cmd_bash_preferred_on_windows(name):
     util.helper_target(
         genrule,
@@ -1292,6 +1369,457 @@ def _missing_cmd_rejected_impl(env, target):
         ),
     )
 
+def _test_selected_cmd(name):
+    util.helper_target(
+        genrule,
+        name = name + "_subject",
+        outs = [name + ".out"],
+        cmd = select({
+            ":dbg": "echo dbg > $@",
+            "//conditions:default": "echo default > $@",
+        }),
+    )
+    analysis_test(
+        name = name,
+        impl = _test_selected_cmd_impl,
+        target = name + "_subject",
+        config_settings = _DBG,
+    )
+
+def _test_selected_cmd_impl(env, target):
+    action = env.expect.that_target(target).action_named("Genrule")
+    env.expect.that_str(_command(action)).equals("echo dbg > " + _output(target).path)
+
+def _test_selected_srcs_and_tools(name):
+    util.helper_target(
+        genrule,
+        name = name + "_subject",
+        srcs = select({
+            ":dbg": ["src.txt"],
+            "//conditions:default": ["src2.txt"],
+        }),
+        outs = [name + ".out"],
+        cmd = "$(location :tool) $< $@",
+        tools = select({
+            ":dbg": [":tool"],
+            "//conditions:default": [],
+        }),
+    )
+    analysis_test(
+        name = name,
+        impl = _test_selected_srcs_and_tools_impl,
+        target = name + "_subject",
+        config_settings = _DBG,
+    )
+
+def _test_selected_srcs_and_tools_impl(env, target):
+    action = env.expect.that_target(target).action_named("Genrule")
+    inputs = {f.basename: f for f in action.actual.inputs.to_list()}
+    env.expect.that_collection(inputs.keys()).contains("src.txt")
+    env.expect.that_collection(inputs.keys()).not_contains("src2.txt")
+    tool = inputs.get("tool.exe", inputs.get("tool"))
+    env.expect.that_str(_command(action)).equals("%s %s/src.txt %s" % (
+        tool.path,
+        target.label.package,
+        _output(target).path,
+    ))
+
+def _test_selected_local_and_stamp(name):
+    util.helper_target(
+        genrule,
+        name = name + "_subject",
+        outs = [name + ".out"],
+        cmd = "echo hello > $@",
+        local = select({
+            ":dbg": True,
+            "//conditions:default": False,
+        }),
+        stamp = select({
+            ":dbg": 1,
+            "//conditions:default": 0,
+        }),
+    )
+    analysis_test(
+        name = name,
+        impl = _test_selected_local_and_stamp_impl,
+        target = name + "_subject",
+        config_settings = _DBG,
+    )
+
+def _test_selected_local_and_stamp_impl(env, target):
+    action = env.expect.that_target(target).action_named("Genrule")
+    env.expect.that_dict(action.actual.execution_info).contains_exactly({
+        "local": "",
+    })
+    action.inputs().contains_predicate(matching.file_basename_equals("stable-status.txt"))
+
+def _test_cmd_bash_none_is_unset(name):
+    util.helper_target(
+        genrule,
+        name = name + "_subject",
+        outs = [name + ".out"],
+        cmd = "echo cmd > $@",
+        cmd_bash = None,
+    )
+    analysis_test(
+        name = name,
+        impl = _test_cmd_bash_none_is_unset_impl,
+        target = name + "_subject",
+    )
+
+def _test_cmd_bash_none_is_unset_impl(env, target):
+    action = env.expect.that_target(target).action_named("Genrule")
+    env.expect.that_str(_command(action)).equals("echo cmd > " + _output(target).path)
+
+def _test_cmd_bash_selecting_none_is_unset(name):
+    util.helper_target(
+        genrule,
+        name = name + "_subject",
+        outs = [name + ".out"],
+        cmd = "echo cmd > $@",
+        cmd_bash = select({
+            ":dbg": "echo dbg > $@",
+            "//conditions:default": None,
+        }),
+    )
+    analysis_test(
+        name = name,
+        impl = _test_cmd_bash_selecting_none_is_unset_impl,
+        target = name + "_subject",
+        config_settings = _FASTBUILD,
+    )
+
+def _test_cmd_bash_selecting_none_is_unset_impl(env, target):
+    # A select() that resolves to None doesn't count as setting cmd_bash.
+    action = env.expect.that_target(target).action_named("Genrule")
+    env.expect.that_str(_command(action)).equals("echo cmd > " + _output(target).path)
+
+def _test_cmd_bash_selecting_empty_string_is_set(name):
+    util.helper_target(
+        genrule,
+        name = name + "_subject",
+        outs = [name + ".out"],
+        cmd = "echo cmd > $@",
+        cmd_bash = select({
+            ":dbg": "echo dbg > $@",
+            "//conditions:default": "",
+        }),
+    )
+    analysis_test(
+        name = name,
+        impl = _test_empty_cmd_bash_is_set_impl,
+        target = name + "_subject",
+        config_settings = _FASTBUILD,
+    )
+
+def _test_cmd_bash_selecting_none_without_conditions(name):
+    util.helper_target(
+        genrule,
+        name = name + "_subject",
+        outs = [name + ".out"],
+        cmd = "echo cmd > $@",
+        cmd_bash = select({
+            "//conditions:default": None,
+        }),
+    )
+    analysis_test(
+        name = name,
+        impl = _test_cmd_bash_selecting_none_without_conditions_impl,
+        target = name + "_subject",
+    )
+
+def _test_cmd_bash_selecting_none_without_conditions_impl(env, target):
+    # UNDESIRED: Unlike a select() with conditions, a select() with only a
+    # default condition counts as setting cmd_bash even if it resolves to None,
+    # which results in an empty command.
+    action = env.expect.that_target(target).action_named("Genrule")
+    env.expect.that_str(_command(action)).equals("")
+
+def _test_empty_cmd_bash_is_set(name):
+    util.helper_target(
+        genrule,
+        name = name + "_subject",
+        outs = [name + ".out"],
+        cmd = "echo cmd > $@",
+        cmd_bash = "",
+    )
+    analysis_test(
+        name = name,
+        impl = _test_empty_cmd_bash_is_set_impl,
+        target = name + "_subject",
+    )
+
+def _test_empty_cmd_bash_is_set_impl(env, target):
+    # An empty cmd_bash takes precedence over cmd, which results in an empty
+    # command.
+    action = env.expect.that_target(target).action_named("Genrule")
+    env.expect.that_str(_command(action)).equals("")
+
+def _test_cmd_ps_selecting_none_is_unset_on_windows(name):
+    util.helper_target(
+        genrule,
+        name = name + "_subject",
+        outs = [name + ".out"],
+        cmd_bat = "echo bat > $@",
+        cmd_ps = select({
+            ":dbg": "echo ps > $@",
+            "//conditions:default": None,
+        }),
+        exec_compatible_with = ["@platforms//os:windows"],
+    )
+    analysis_test(
+        name = name,
+        impl = _test_cmd_ps_selecting_none_is_unset_on_windows_impl,
+        target = name + "_subject",
+        config_settings = _WINDOWS_EXEC | _FASTBUILD,
+    )
+
+def _test_cmd_ps_selecting_none_is_unset_on_windows_impl(env, target):
+    action = env.expect.that_target(target).action_named("Genrule")
+    env.expect.that_str(action.actual.argv[0]).equals("cmd.exe")
+    env.expect.that_str(action.actual.argv[-1]).equals(
+        "echo bat > " + _output(target).path.replace("/", "\\"),
+    )
+
+def _test_outputs_inherit_rule_visibility(name):
+    util.helper_target(
+        genrule,
+        name = name + "_subject",
+        srcs = ["//tests/genrule/visibility:private.txt"],
+        outs = [name + ".out"],
+        cmd = "cp $< $@",
+    )
+    analysis_test(
+        name = name,
+        impl = _test_outputs_inherit_rule_visibility_impl,
+        target = name + "_subject",
+        expect_failure = True,
+    )
+
+def _test_outputs_inherit_rule_visibility_impl(env, target):
+    env.expect.that_target(target).failures().contains_predicate(
+        matching.str_matches("*target '//tests/genrule/visibility:private.txt' is not visible*"),
+    )
+
+def _test_outputs_of_public_rule_are_visible(name):
+    util.helper_target(
+        genrule,
+        name = name + "_subject",
+        srcs = ["//tests/genrule/visibility:public.txt"],
+        outs = [name + ".out"],
+        cmd = "cp $< $@",
+    )
+    analysis_test(
+        name = name,
+        impl = _test_outputs_of_public_rule_are_visible_impl,
+        target = name + "_subject",
+    )
+
+def _test_outputs_of_public_rule_are_visible_impl(env, target):
+    action = env.expect.that_target(target).action_named("Genrule")
+    action.inputs().contains_predicate(matching.file_basename_equals("public.txt"))
+
+_EXPANDED_DIRECTORIES = "$(@D) $(RULEDIR) $(BINDIR) $(GENDIR) $(location {name}_a.out)"
+
+def _unmerged_genfiles_test(name, *, output_to_bindir, impl):
+    util.helper_target(
+        genrule,
+        name = name + "_subject",
+        outs = [name + "_a.out"],
+        cmd = _EXPANDED_DIRECTORIES.format(name = name),
+        output_to_bindir = output_to_bindir,
+    )
+    analysis_test(
+        name = name,
+        impl = impl,
+        target = name + "_subject",
+        config_settings = {
+            "//command_line_option:incompatible_merge_genfiles_directory": False,
+        },
+    )
+
+def _test_directories_with_unmerged_genfiles(name):
+    _unmerged_genfiles_test(
+        name,
+        output_to_bindir = False,
+        impl = _test_directories_with_unmerged_genfiles_impl,
+    )
+
+def _test_directories_with_unmerged_genfiles_impl(env, target):
+    # Outputs, $(@D) and $(RULEDIR) are in the genfiles directory.
+    action = env.expect.that_target(target).action_named("Genrule")
+    out = _output(target)
+    genfiles = out.root.path
+    bin = genfiles.removesuffix("/genfiles") + "/bin"
+    env.expect.that_str(genfiles).contains("/genfiles")
+    env.expect.that_str(_command(action)).equals(" ".join([
+        out.dirname,
+        genfiles + "/" + target.label.package,
+        bin,
+        genfiles,
+        out.path,
+    ]))
+
+def _test_directories_with_unmerged_genfiles_and_output_to_bindir(name):
+    _unmerged_genfiles_test(
+        name,
+        output_to_bindir = True,
+        impl = _test_directories_with_unmerged_genfiles_and_output_to_bindir_impl,
+    )
+
+def _test_directories_with_unmerged_genfiles_and_output_to_bindir_impl(env, target):
+    # Outputs, $(@D) and $(RULEDIR) are in the bin directory.
+    action = env.expect.that_target(target).action_named("Genrule")
+    out = _output(target)
+    bin = out.root.path
+    genfiles = bin.removesuffix("/bin") + "/genfiles"
+    env.expect.that_str(bin).contains("/bin")
+    env.expect.that_str(_command(action)).equals(" ".join([
+        out.dirname,
+        bin + "/" + target.label.package,
+        bin,
+        genfiles,
+        out.path,
+    ]))
+
+def _test_rule_kind(name):
+    util.helper_target(
+        genrule,
+        name = name + "_subject",
+        outs = [name + ".out"],
+        cmd = "touch $@",
+    )
+    util.helper_target(
+        genrule,
+        name = name + "_executable",
+        outs = [name + "_executable.out"],
+        cmd = "touch $@",
+        executable = True,
+    )
+    analysis_test(
+        name = name,
+        impl = _test_rule_kind_impl,
+        target = name + "_subject",
+        attrs = {
+            "kinds": attr.string_list(),
+        },
+        # Tools such as `bazel query 'kind(genrule, ...)'` rely on the kind,
+        # also of executable genrules.
+        attr_values = {
+            "kinds": [
+                native.existing_rule(name + "_subject")["kind"],
+                native.existing_rule(name + "_executable")["kind"],
+            ],
+        },
+    )
+
+def _test_rule_kind_impl(env, target):  # @unused
+    env.expect.that_collection(env.ctx.attr.kinds).contains_exactly([
+        "genrule",
+        "genrule",
+    ])
+
+def _test_executable_dependency(name):
+    util.helper_target(
+        genrule,
+        name = name + "_executable",
+        outs = [name + "_out.sh"],
+        cmd = "touch $@",
+        executable = True,
+    )
+    util.helper_target(
+        executable_dependency,
+        name = name + "_subject",
+        executable = name + "_executable",
+    )
+    analysis_test(
+        name = name,
+        impl = _test_executable_dependency_impl,
+        target = name + "_subject",
+    )
+
+def _test_executable_dependency_impl(env, target):
+    # An executable genrule can be used where an executable is required.
+    env.expect.that_target(target).default_outputs().contains_exactly([
+        "{package}/%s_out.sh" % _test_name(target),
+    ])
+
+def _test_non_executable_dependency_rejected(name):
+    util.helper_target(
+        genrule,
+        name = name + "_genrule",
+        outs = [name + "_out.sh"],
+        cmd = "touch $@",
+    )
+    util.helper_target(
+        executable_dependency,
+        name = name + "_subject",
+        executable = name + "_genrule",
+    )
+    analysis_test(
+        name = name,
+        impl = _test_non_executable_dependency_rejected_impl,
+        target = name + "_subject",
+        expect_failure = True,
+    )
+
+def _test_non_executable_dependency_rejected_impl(env, target):
+    env.expect.that_target(target).failures().contains_predicate(
+        matching.str_matches("*_genrule does not refer to a valid executable target*"),
+    )
+
+def _test_executable_runfiles(name):
+    util.helper_target(
+        genrule,
+        name = name + "_subject",
+        srcs = ["src.txt"],
+        outs = [name + "_out.sh"],
+        cmd = "touch $@",
+        executable = True,
+        tools = [":tool"],
+    )
+    analysis_test(
+        name = name,
+        impl = _test_executable_runfiles_impl,
+        target = name + "_subject",
+    )
+
+def _test_executable_runfiles_impl(env, target):
+    # The executable isn't among its default runfiles, unlike for executable
+    # Starlark rules.
+    test_name = _test_name(target)
+    env.expect.that_target(target).runfiles().contains_exactly([])
+    env.expect.that_target(target).data_runfiles().contains_exactly([
+        "{workspace}/{package}/%s_out.sh" % test_name,
+    ])
+
+def _test_instrumented_files(name):
+    util.helper_target(
+        genrule,
+        name = name + "_subject",
+        srcs = ["src.txt"],
+        outs = [name + ".out"],
+        cmd = "touch $@",
+        tools = ["tool.sh"],
+    )
+    analysis_test(
+        name = name,
+        impl = _test_instrumented_files_impl,
+        target = name + "_subject",
+        config_settings = {
+            "//command_line_option:collect_code_coverage": True,
+            "//command_line_option:instrumentation_filter": "^//tests/genrule[/:]",
+        },
+    )
+
+def _test_instrumented_files_impl(env, target):
+    # Only srcs are instrumented.
+    env.expect.that_target(target).provider(
+        InstrumentedFilesInfo,
+    ).instrumented_files().contains_exactly([
+        "{package}/src.txt",
+    ])
+
 def genrule_test_suite(name):
     test_suite(
         name = name,
@@ -1337,6 +1865,7 @@ def genrule_test_suite(name):
             _test_toolchains_from_toolchain_type,
             _test_toolchains_from_toolchain_type_without_toolchain,
             _test_toolchain_files_are_inputs,
+            _test_toolchain_files_are_in_target_configuration,
             _test_runfiles,
             _test_external_repo_labels,
             _test_external_repo_output_dir,
@@ -1344,9 +1873,28 @@ def genrule_test_suite(name):
             _test_cmd_ps_preferred_on_windows,
             _test_cmd_bat_uses_script_file,
             _test_cmd_ps_uses_script_file,
+            _test_cmd_bat_quotes_paths_with_spaces,
             _test_cmd_bash_preferred_on_windows,
             _test_cmd_bash_preferred_on_linux,
             _test_missing_cmd_rejected,
             _test_cmd_bat_rejected_on_linux,
+            _test_selected_cmd,
+            _test_selected_srcs_and_tools,
+            _test_selected_local_and_stamp,
+            _test_cmd_bash_none_is_unset,
+            _test_cmd_bash_selecting_none_is_unset,
+            _test_cmd_bash_selecting_empty_string_is_set,
+            _test_cmd_bash_selecting_none_without_conditions,
+            _test_empty_cmd_bash_is_set,
+            _test_cmd_ps_selecting_none_is_unset_on_windows,
+            _test_outputs_inherit_rule_visibility,
+            _test_outputs_of_public_rule_are_visible,
+            _test_directories_with_unmerged_genfiles,
+            _test_directories_with_unmerged_genfiles_and_output_to_bindir,
+            _test_rule_kind,
+            _test_executable_dependency,
+            _test_non_executable_dependency_rejected,
+            _test_executable_runfiles,
+            _test_instrumented_files,
         ],
     )

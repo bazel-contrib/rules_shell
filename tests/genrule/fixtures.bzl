@@ -9,6 +9,11 @@ def _template_variables_impl(ctx):
     if ctx.file.file:
         variables[ctx.attr.file_variable] = ctx.file.file.path
         files.append(ctx.file.file)
+    if ctx.attr.generated_file_variable:
+        generated_file = ctx.actions.declare_file(ctx.label.name + ".txt")
+        ctx.actions.write(generated_file, "generated\n")
+        variables[ctx.attr.generated_file_variable] = generated_file.path
+        files.append(generated_file)
     return [
         platform_common.TemplateVariableInfo(variables),
         DefaultInfo(files = depset(files)),
@@ -22,6 +27,8 @@ template_variables = rule(
         # A file whose path is provided as the variable `file_variable`.
         "file": attr.label(allow_single_file = True),
         "file_variable": attr.string(),
+        # The variable that provides the path of a generated file.
+        "generated_file_variable": attr.string(),
     },
 )
 
@@ -94,4 +101,42 @@ genrule_with_action_env, _genrule_with_action_env = (
     with_cfg(genrule)
         .extend("action_env", ["FROM_ACTION_ENV=action_env_value"])
         .build()
+)
+
+def _executable_with_multiple_files_impl(ctx):
+    executable = ctx.actions.declare_file(ctx.label.name + ".sh")
+    ctx.actions.write(
+        output = executable,
+        content = "#!/bin/sh\n",
+        is_executable = True,
+    )
+    data = ctx.actions.declare_file(ctx.label.name + ".txt")
+    ctx.actions.write(
+        output = data,
+        content = "",
+    )
+    return [DefaultInfo(
+        files = depset([data, executable]),
+        executable = executable,
+    )]
+
+executable_with_multiple_files = rule(
+    implementation = _executable_with_multiple_files_impl,
+    doc = "An executable whose default outputs also contain another file.",
+    executable = True,
+)
+
+def _executable_dependency_impl(ctx):
+    return [DefaultInfo(files = depset([ctx.executable.executable]))]
+
+executable_dependency = rule(
+    implementation = _executable_dependency_impl,
+    doc = "Depends on an executable in the exec configuration.",
+    attrs = {
+        "executable": attr.label(
+            cfg = "exec",
+            executable = True,
+            mandatory = True,
+        ),
+    },
 )
