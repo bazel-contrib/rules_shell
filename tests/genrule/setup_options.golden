@@ -1,0 +1,3 @@
+errexit
+nounset
+pipefail
