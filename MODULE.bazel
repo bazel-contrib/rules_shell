@@ -16,3 +16,8 @@ bazel_dep(name = "rules_shellcheck", version = "0.6.2", dev_dependency = True)
 bazel_dep(name = "rules_testing", version = "0.9.0", dev_dependency = True)
 bazel_dep(name = "stardoc", version = "0.8.1", dev_dependency = True)
 bazel_dep(name = "with_cfg.bzl", version = "0.14.1", dev_dependency = True)
+bazel_dep(name = "rules_shell_test_other_module", dev_dependency = True)
+local_path_override(
+    module_name = "rules_shell_test_other_module",
+    path = "tests/runfiles/other_module",
+)
