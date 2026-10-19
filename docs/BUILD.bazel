@@ -1,6 +1,13 @@
 load("@stardoc//stardoc:stardoc.bzl", "stardoc")
 
 stardoc(
+    name = "run_shell",
+    out = "run_shell.md",
+    input = "//shell:run_shell.bzl",
+    deps = ["//shell:rules_bzl"],
+)
+
+stardoc(
     name = "sh_binary",
     out = "sh_binary.md",
     input = "//shell:sh_binary.bzl",
@@ -53,6 +60,7 @@ filegroup(
     name = "docs",
     srcs = [
         ":repositories.md",
+        ":run_shell.md",
         ":sh_binary.md",
         ":sh_binary_info.md",
         ":sh_info.md",

@@ -1,2 +1,4 @@
 common --check_direct_dependencies=off
 common --keep_going
+# Exposes Action.execution_info to analysis tests.
+common --experimental_google_legacy_api
