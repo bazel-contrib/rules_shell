@@ -15,6 +15,8 @@
 
 visibility("public")
 
+SH_TOOLCHAIN_TYPE = Label("//shell:toolchain_type")
+
 def _sh_toolchain_impl(ctx):
     """sh_toolchain rule implementation."""
     return [

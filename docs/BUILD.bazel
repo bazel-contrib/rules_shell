@@ -1,6 +1,13 @@
 load("@stardoc//stardoc:stardoc.bzl", "stardoc")
 
 stardoc(
+    name = "run_shell",
+    out = "run_shell.md",
+    input = "//shell:run_shell.bzl",
+    deps = ["//shell:rules_bzl"],
+)
+
+stardoc(
     name = "sh_binary",
     out = "sh_binary.md",
     input = "//shell:sh_binary.bzl",
@@ -43,6 +50,13 @@ stardoc(
 )
 
 stardoc(
+    name = "sh_exec_toolchain",
+    out = "sh_exec_toolchain.md",
+    input = "//shell/toolchains:sh_exec_toolchain.bzl",
+    deps = ["//shell/toolchains:toolchains_bzl"],
+)
+
+stardoc(
     name = "repositories",
     out = "repositories.md",
     input = "//shell:repositories.bzl",
@@ -53,8 +67,10 @@ filegroup(
     name = "docs",
     srcs = [
         ":repositories.md",
+        ":run_shell.md",
         ":sh_binary.md",
         ":sh_binary_info.md",
+        ":sh_exec_toolchain.md",
         ":sh_info.md",
         ":sh_library.md",
         ":sh_test.md",

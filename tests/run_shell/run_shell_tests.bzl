@@ -1,18 +1,30 @@
-"""Analysis tests for `ctx.actions.run_shell`."""
+"""Analysis tests for the `run_shell` function."""
 
 load("@rules_testing//lib:analysis_test.bzl", "analysis_test", "test_suite")
 load("@rules_testing//lib:truth.bzl", "matching")
 load("@rules_testing//lib:util.bzl", "util")
 load(
     ":fixtures.bzl",
+    "command_in_exec_group",
     "command_list",
     "command_no_arguments",
+    "command_of_given_length",
     "command_string",
+    "command_with_optional_toolchain",
+    "command_with_other_toolchain",
+    "command_with_resource_set",
     "command_with_tools",
+    "command_without_toolchain",
+    "env_and_execution_requirements",
     "invalid_mnemonic",
     "lazy_args",
+    "lazy_args_with_param_file",
     "long_command",
     "medium_command",
+    "no_outputs",
+    "string_arguments",
+    "string_outputs",
+    "tuple_arguments",
     "two_long_commands",
 )
 
@@ -44,6 +56,11 @@ def _test_command_string_impl(env, target):
         matching.file_basename_equals("b.img"),
     ])
 
+    env.expect.that_collection([f.basename for f in action.actual.outputs.to_list()]).contains_exactly([
+        target.label.name + "_a.txt",
+        target.label.name + "_b.img",
+    ])
+
     action.env().contains_exactly({"a": "b"})
 
 def _test_command_no_arguments(name):
@@ -65,6 +82,7 @@ def _test_command_no_arguments_impl(env, target):
     action.argv().has_size(3)
     action.argv().contains_at_least(["-c"]).in_order()
     action.argv().not_contains("")
+    env.expect.that_bool(action.actual.argv[2].startswith("echo foo123")).equals(True)
 
 def _test_command_with_tools(name):
     util.helper_target(
@@ -250,6 +268,453 @@ def _test_two_run_shell_calls_impl(env, target):
     spawn2 = env.expect.that_target(target).action_named("Mnemonic2")
     env.expect.that_bool(_passes_command_inline(spawn2, "echo yyy6999 ;")).equals(False)
 
+# Execution platforms with different maximum command lengths and shell exec
+# toolchains with recognizable paths.
+_LINUX_AND_WINDOWS_EXEC = {
+    "//command_line_option:extra_execution_platforms": [
+        "//tests/run_shell:linux_exec",
+        "//tests/run_shell:windows_exec",
+    ],
+    "//command_line_option:extra_toolchains": [
+        "//tests/run_shell:custom_linux_sh_exec_toolchain",
+        "//tests/run_shell:custom_windows_sh_exec_toolchain",
+    ],
+}
+
+def _test_exec_group(name):
+    util.helper_target(
+        command_in_exec_group,
+        name = name + "_subject",
+        use_exec_group = "windows",
+        # Force a Linux execution platform for the default exec group so that
+        # only the "windows" exec group applies the shorter Windows command
+        # length limit.
+        exec_compatible_with = ["@platforms//os:linux"],
+    )
+    analysis_test(
+        name = name,
+        impl = _test_exec_group_impl,
+        target = name + "_subject",
+        config_settings = _LINUX_AND_WINDOWS_EXEC,
+    )
+
+def _test_exec_group_impl(env, target):
+    # The given exec group resolves to a Windows execution platform.
+    spawn = env.expect.that_target(target).action_named("ExecGroupMnemonic")
+    env.expect.that_str(spawn.actual.argv[0]).equals("C:/custom/windows/bash.exe")
+    env.expect.that_bool(_passes_command_inline(spawn, "echo zzz999 ;")).equals(False)
+
+def _test_default_exec_group(name):
+    util.helper_target(
+        command_in_exec_group,
+        name = name + "_subject",
+        exec_compatible_with = ["@platforms//os:linux"],
+    )
+    analysis_test(
+        name = name,
+        impl = _test_default_exec_group_impl,
+        target = name + "_subject",
+        config_settings = _LINUX_AND_WINDOWS_EXEC,
+    )
+
+def _test_default_exec_group_impl(env, target):
+    # Without an exec group, the default exec group is used.
+    spawn = env.expect.that_target(target).action_named("ExecGroupMnemonic")
+    env.expect.that_str(spawn.actual.argv[0]).equals("/custom/linux/bash")
+    env.expect.that_bool(_passes_command_inline(spawn, "echo zzz999 ;")).equals(True)
+
+def _test_env_and_execution_requirements(name):
+    util.helper_target(
+        env_and_execution_requirements,
+        name = name + "_subject",
+        tags = ["no-remote"],
+    )
+    analysis_test(
+        name = name,
+        impl = _test_env_and_execution_requirements_impl,
+        target = name + "_subject",
+    )
+
+def _test_env_and_execution_requirements_impl(env, target):
+    action = env.expect.that_target(target).action_named("DummyMnemonic")
+
+    action.env().contains_exactly({"a": "b"})
+
+    # "timeout" is not a recognized execution requirement and filtered out, the
+    # "no-remote" tag of the target is propagated.
+    env.expect.that_dict(action.actual.execution_info).contains_exactly({
+        "block-network": "foo",
+        "no-remote": "",
+    })
+
+def _test_lazy_args_with_param_file(name):
+    util.helper_target(
+        lazy_args_with_param_file,
+        name = name + "_subject",
+    )
+    analysis_test(
+        name = name,
+        impl = _test_lazy_args_with_param_file_impl,
+        target = name + "_subject",
+    )
+
+def _test_lazy_args_with_param_file_impl(env, target):
+    action = env.expect.that_target(target).action_named("DummyMnemonic")
+
+    # `argv` reflects the contents of the Args object's param file, which
+    # follow the padding for $0. tests/run_shell:param_file_args_* verify that
+    # the param file is used at execution time.
+    action.argv().contains_at_least_predicates([
+        matching.equals_wrapper("-c"),
+        matching.str_startswith("touch "),
+        matching.equals_wrapper(""),
+        matching.equals_wrapper("--foo"),
+    ]).in_order()
+
+def _test_tuple_arguments(name):
+    util.helper_target(
+        tuple_arguments,
+        name = name + "_subject",
+    )
+    analysis_test(
+        name = name,
+        impl = _test_tuple_arguments_impl,
+        target = name + "_subject",
+    )
+
+def _test_tuple_arguments_impl(env, target):
+    action = env.expect.that_target(target).action_named("DummyMnemonic")
+
+    action.argv().contains_at_least(["-c", "dummy_command", "", "--foo", "--bar", "--baz"]).in_order()
+
+def _test_string_arguments_rejected(name):
+    util.helper_target(
+        string_arguments,
+        name = name + "_subject",
+    )
+    analysis_test(
+        name = name,
+        impl = _test_string_arguments_rejected_impl,
+        target = name + "_subject",
+        expect_failure = True,
+    )
+
+def _test_string_arguments_rejected_impl(env, target):
+    env.expect.that_target(target).failures().contains_predicate(
+        matching.str_matches("*got value of type 'string'*"),
+    )
+
+def _test_no_outputs_rejected(name):
+    util.helper_target(
+        no_outputs,
+        name = name + "_subject",
+    )
+    analysis_test(
+        name = name,
+        impl = _test_no_outputs_rejected_impl,
+        target = name + "_subject",
+        expect_failure = True,
+    )
+
+def _test_no_outputs_rejected_impl(env, target):
+    env.expect.that_target(target).failures().contains_predicate(
+        matching.str_matches("*param 'outputs' may not be empty*"),
+    )
+
+def _test_string_outputs_rejected(name):
+    util.helper_target(
+        string_outputs,
+        name = name + "_subject",
+    )
+    analysis_test(
+        name = name,
+        impl = _test_string_outputs_rejected_impl,
+        target = name + "_subject",
+        expect_failure = True,
+    )
+
+def _test_string_outputs_rejected_impl(env, target):
+    env.expect.that_target(target).failures().contains_predicate(
+        matching.str_matches("*at index 0 of outputs, got element of type string, want File*"),
+    )
+
+def _test_unknown_exec_group_rejected(name):
+    util.helper_target(
+        command_in_exec_group,
+        name = name + "_subject",
+        use_exec_group = "honeydew",
+    )
+    analysis_test(
+        name = name,
+        impl = _test_unknown_exec_group_rejected_impl,
+        target = name + "_subject",
+        expect_failure = True,
+        config_settings = {
+            "//command_line_option:extra_execution_platforms": [
+                "//tests/run_shell:windows_exec",
+            ],
+        },
+    )
+
+def _test_unknown_exec_group_rejected_impl(env, target):
+    env.expect.that_target(target).failures().contains_predicate(
+        matching.str_matches("*exec group 'honeydew'*"),
+    )
+
+def _test_auto_exec_groups(name):
+    util.helper_target(
+        command_no_arguments,
+        name = name + "_subject",
+    )
+    analysis_test(
+        name = name,
+        impl = _test_auto_exec_groups_impl,
+        target = name + "_subject",
+        config_settings = {
+            "//command_line_option:incompatible_auto_exec_groups": True,
+        },
+    )
+
+def _test_auto_exec_groups_impl(env, target):
+    action = env.expect.that_target(target).action_generating("{package}/{name}.out")
+
+    action.argv().contains_at_least(["-c"]).in_order()
+
+def _test_auto_exec_groups_with_exec_group(name):
+    util.helper_target(
+        command_in_exec_group,
+        name = name + "_subject",
+        use_exec_group = "windows",
+        exec_compatible_with = ["@platforms//os:linux"],
+    )
+    analysis_test(
+        name = name,
+        impl = _test_exec_group_impl,
+        target = name + "_subject",
+        config_settings = _LINUX_AND_WINDOWS_EXEC | {
+            "//command_line_option:incompatible_auto_exec_groups": True,
+        },
+    )
+
+def _other_toolchain_test(name, *, auto_exec_groups):
+    util.helper_target(
+        command_with_other_toolchain,
+        name = name + "_subject",
+    )
+    analysis_test(
+        name = name,
+        impl = lambda env, target: _other_toolchain_test_impl(env, target, auto_exec_groups = auto_exec_groups),
+        target = name + "_subject",
+        config_settings = _LINUX_AND_WINDOWS_EXEC | {
+            "//command_line_option:extra_toolchains": _LINUX_AND_WINDOWS_EXEC["//command_line_option:extra_toolchains"] + [
+                "//tests/run_shell:windows_only_toolchain",
+            ],
+            "//command_line_option:incompatible_auto_exec_groups": auto_exec_groups,
+        },
+    )
+
+def _other_toolchain_test_impl(env, target, *, auto_exec_groups):
+    # Without automatic exec groups, the action runs on the only execution
+    # platform that has all toolchains of the rule. With them, it runs on the
+    # first execution platform with a shell exec toolchain.
+    spawn = env.expect.that_target(target).action_named("OtherToolchainMnemonic")
+    env.expect.that_str(spawn.actual.argv[0]).equals(
+        "/custom/linux/bash" if auto_exec_groups else "C:/custom/windows/bash.exe",
+    )
+
+def _test_other_toolchain_with_auto_exec_groups(name):
+    _other_toolchain_test(name, auto_exec_groups = True)
+
+def _test_other_toolchain_without_auto_exec_groups(name):
+    _other_toolchain_test(name, auto_exec_groups = False)
+
+def _test_missing_toolchain_rejected(name):
+    util.helper_target(
+        command_without_toolchain,
+        name = name + "_subject",
+    )
+    analysis_test(
+        name = name,
+        impl = _test_missing_toolchain_rejected_impl,
+        target = name + "_subject",
+        expect_failure = True,
+    )
+
+def _test_missing_toolchain_rejected_impl(env, target):
+    env.expect.that_target(target).failures().contains_predicate(
+        matching.str_matches("*run_shell requires the shell exec toolchain type to be declared on the rule or aspect*"),
+    )
+
+def _test_missing_toolchain_in_exec_group_rejected(name):
+    util.helper_target(
+        command_without_toolchain,
+        name = name + "_subject",
+        use_exec_group = "no_toolchain",
+    )
+    analysis_test(
+        name = name,
+        impl = _test_missing_toolchain_in_exec_group_rejected_impl,
+        target = name + "_subject",
+        expect_failure = True,
+    )
+
+def _test_missing_toolchain_in_exec_group_rejected_impl(env, target):
+    env.expect.that_target(target).failures().contains_predicate(
+        matching.str_matches("*run_shell requires the shell exec toolchain type to be declared in exec group 'no_toolchain'*"),
+    )
+
+def _test_optional_toolchain_not_found(name):
+    util.helper_target(
+        command_with_optional_toolchain,
+        name = name + "_subject",
+        exec_compatible_with = ["@platforms//os:none"],
+    )
+    analysis_test(
+        name = name,
+        impl = _test_optional_toolchain_not_found_impl,
+        target = name + "_subject",
+        expect_failure = True,
+        config_settings = {
+            "//command_line_option:extra_execution_platforms": [
+                "//tests/run_shell:no_os_exec",
+            ],
+        },
+    )
+
+def _test_optional_toolchain_not_found_impl(env, target):
+    env.expect.that_target(target).failures().contains_predicate(
+        matching.str_matches("*No shell exec toolchain found for the execution platform of this action*"),
+    )
+
+def _command_of_given_length_test(name, *, length, inline):
+    util.helper_target(
+        command_of_given_length,
+        name = name + "_subject",
+        length = length,
+    )
+    analysis_test(
+        name = name,
+        impl = lambda env, target: _command_of_given_length_test_impl(env, target, length = length, inline = inline),
+        target = name + "_subject",
+        config_settings = {
+            "//command_line_option:extra_toolchains": [
+                "//tests/run_shell:short_sh_exec_toolchain",
+            ],
+        },
+    )
+
+def _command_of_given_length_test_impl(env, target, *, length, inline):
+    # Commands up to and including the max_command_length of the toolchain are
+    # passed inline.
+    spawn = env.expect.that_target(target).action_named("CommandOfGivenLength")
+    env.expect.that_bool(_passes_command_inline(spawn, "#" * length)).equals(inline)
+
+def _test_command_at_max_length(name):
+    _command_of_given_length_test(name, length = 10, inline = True)
+
+def _test_command_above_max_length(name):
+    _command_of_given_length_test(name, length = 11, inline = False)
+
+def _default_shell_test(name, *, os):
+    util.helper_target(
+        command_no_arguments,
+        name = name + "_subject",
+        exec_compatible_with = ["@platforms//os:" + os],
+    )
+    analysis_test(
+        name = name,
+        impl = _default_shell_test_impl,
+        target = name + "_subject",
+        config_settings = {
+            "//command_line_option:extra_execution_platforms": [
+                "//tests/run_shell:%s_exec" % os,
+            ],
+        },
+    )
+
+def _default_shell_test_impl(env, target):
+    # Not the host OS of any CI platform, so the default shell path is used,
+    # also on Windows hosts, where Bazel always sets BAZEL_SH.
+    action = env.expect.that_target(target).action_generating("{package}/{name}.out")
+    env.expect.that_str(action.actual.argv[0]).equals("/usr/local/bin/bash")
+
+def _test_default_shell_freebsd(name):
+    _default_shell_test(name, os = "freebsd")
+
+def _test_default_shell_openbsd(name):
+    _default_shell_test(name, os = "openbsd")
+
+def _test_resource_set(name):
+    util.helper_target(
+        command_with_resource_set,
+        name = name + "_subject",
+    )
+    analysis_test(
+        name = name,
+        impl = _test_resource_set_impl,
+        target = name + "_subject",
+    )
+
+def _test_resource_set_impl(env, target):
+    action = env.expect.that_target(target).action_named("ResourceSetMnemonic")
+    action.argv().contains_at_least(["-c"])
+
+def _test_invalid_resource_set_rejected(name):
+    util.helper_target(
+        command_with_resource_set,
+        name = name + "_subject",
+        valid = False,
+    )
+    analysis_test(
+        name = name,
+        impl = _test_invalid_resource_set_rejected_impl,
+        target = name + "_subject",
+        expect_failure = True,
+    )
+
+def _test_invalid_resource_set_rejected_impl(env, target):
+    env.expect.that_target(target).failures().contains_predicate(
+        matching.str_matches("*parameter 'resource_set' got value of type 'string'*"),
+    )
+
+def _shell_executable_test(name, *, custom_toolchains):
+    util.helper_target(
+        command_in_exec_group,
+        name = name + "_subject",
+        use_exec_group = "windows",
+        exec_compatible_with = ["@platforms//os:linux"],
+    )
+    config_settings = {
+        "//command_line_option:extra_execution_platforms": [
+            "//tests/run_shell:linux_exec",
+            "//tests/run_shell:windows_exec",
+        ],
+        "//command_line_option:shell_executable": "/shell/executable/bash",
+    }
+    if custom_toolchains:
+        config_settings = _LINUX_AND_WINDOWS_EXEC | config_settings
+    analysis_test(
+        name = name,
+        impl = lambda env, target: _shell_executable_test_impl(env, target, custom_toolchains = custom_toolchains),
+        target = name + "_subject",
+        config_settings = config_settings,
+    )
+
+def _shell_executable_test_impl(env, target, *, custom_toolchains):
+    # The shell executable replaces the path of the default toolchains, but not
+    # their maximum command length, and doesn't affect registered toolchains.
+    spawn = env.expect.that_target(target).action_named("ExecGroupMnemonic")
+    env.expect.that_str(spawn.actual.argv[0]).equals(
+        "C:/custom/windows/bash.exe" if custom_toolchains else "/shell/executable/bash",
+    )
+    env.expect.that_bool(_passes_command_inline(spawn, "echo zzz999 ;")).equals(False)
+
+def _test_shell_executable_with_default_toolchains(name):
+    _shell_executable_test(name, custom_toolchains = False)
+
+def _test_shell_executable_with_custom_toolchains(name):
+    _shell_executable_test(name, custom_toolchains = True)
+
 def run_shell_test_suite(name):
     test_suite(
         name = name,
@@ -265,5 +730,29 @@ def run_shell_test_suite(name):
             _test_windows_threshold,
             _test_medium_command_does_not_use_helper_script,
             _test_two_run_shell_calls,
+            _test_exec_group,
+            _test_default_exec_group,
+            _test_env_and_execution_requirements,
+            _test_lazy_args_with_param_file,
+            _test_tuple_arguments,
+            _test_string_arguments_rejected,
+            _test_no_outputs_rejected,
+            _test_string_outputs_rejected,
+            _test_unknown_exec_group_rejected,
+            _test_auto_exec_groups,
+            _test_auto_exec_groups_with_exec_group,
+            _test_other_toolchain_with_auto_exec_groups,
+            _test_other_toolchain_without_auto_exec_groups,
+            _test_missing_toolchain_rejected,
+            _test_missing_toolchain_in_exec_group_rejected,
+            _test_optional_toolchain_not_found,
+            _test_command_at_max_length,
+            _test_command_above_max_length,
+            _test_default_shell_freebsd,
+            _test_default_shell_openbsd,
+            _test_resource_set,
+            _test_invalid_resource_set_rejected,
+            _test_shell_executable_with_default_toolchains,
+            _test_shell_executable_with_custom_toolchains,
         ],
     )
