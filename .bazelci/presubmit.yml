@@ -83,3 +83,26 @@ tasks:
     test_targets:
       - "//tests/runfiles:runfiles_sh_test"
       - "//tests/runfiles:runfiles_sh_no_awk_test"
+  test_module_posix_shell_runfiles:
+    # Dash coverage for a consuming module. This is what exercises the
+    # `use_bash_launcher` launcher snippet under a non-bash sh_toolchain; see
+    # tests/bcr/posix_launcher, whose scripts initialize the runfiles library
+    # themselves because a POSIX shell cannot export functions across exec.
+    name: "Test module (POSIX Runfiles, dash, ${{modern_bazel}})"
+    working_directory: "tests/bcr"
+    bazel: ${{ modern_bazel }}
+    platform: ubuntu2004
+    shell_commands:
+      - "/bin/dash -c 'echo dash ready'"
+    build_flags:
+      - "--config=posix_shell"
+    build_targets:
+      - "//..."
+      # The bash launcher targets deliberately rely on bash exporting the
+      # runfiles functions across exec, which no POSIX shell can do.
+      - "-//bash_launcher/..."
+    test_flags:
+      - "--config=posix_shell"
+    test_targets:
+      - "//..."
+      - "-//bash_launcher/..."
