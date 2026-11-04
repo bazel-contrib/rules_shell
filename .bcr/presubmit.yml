@@ -8,7 +8,7 @@ bcr_test_module:
       - macos
       - macos_arm64
       - windows
-    bazel: [7.x, 8.x, 9.x]
+    bazel: [6.*, 7.*, 8.*, 9.*, 10.*]
   tasks:
     run_test_module:
       name: Run test module
