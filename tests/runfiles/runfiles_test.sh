@@ -662,7 +662,7 @@ test_runfiles_current_repository_under_set_u() {
 # runfiles_current_repository resolves the repository of the script at the path
 # it is given, which is the POSIX calling convention: a sourced library has no
 # BASH_SOURCE, so it passes its own location. Writes a library at $1 defining
-# function $2, which reports that repository -- or the fixed string $3, for a
+# function $2, which reports that repository, or the fixed string $3 for a
 # stale copy that must never be sourced.
 write_current_repository_lib() {
   mkdir -p "${1%/*}"
@@ -968,8 +968,8 @@ test_manifest_index_matches_scan_semantics() {
     || fail "expected a longer prefix to still win over the empty one"
 }
 
-# Entries the index cannot hold -- escaped ones, and keys with a character the
-# mangling has no encoding for -- have to keep resolving through the scan.
+# Entries the index cannot hold, escaped ones and keys with a character the
+# mangling has no encoding for, have to keep resolving through the scan.
 test_manifest_index_falls_back_to_scanning() {
   tmpdir="$TEST_TMPDIR/test_manifest_index_falls_back_to_scanning"
   export RULES_SHELL_RUNFILES_CACHE=1
@@ -1335,6 +1335,31 @@ test_directory_based_relative_symlink_targets() {
   assert_rlocation_contents _main/pkg/escaping outside
 }
 
+# The documented initialization snippet, taken from the library's own header,
+# and the library have to work on a host without awk even when awk is asked
+# for: the snippet's awk attempt fails and its shell loop takes over, and the
+# library keeps its shell loops.
+test_survives_without_awk() {
+  tmpdir="$TEST_TMPDIR/test_survives_without_awk"
+  rm -rf "$tmpdir"
+  mkdir -p "$tmpdir/lib/rules_shell/shell/runfiles"
+  cp "$runfiles_lib_path" "$tmpdir/lib/rules_shell/shell/runfiles/runfiles.sh"
+  touch "$tmpdir/f"
+  printf 'r/f %s\nrules_shell/shell/runfiles/runfiles.sh %s\n' "$tmpdir/f" \
+    "$tmpdir/lib/rules_shell/shell/runfiles/runfiles.sh" > "$tmpdir/manifest"
+  {
+    echo '#!/bin/sh'
+    sed -n '/^# *# --- begin runfiles.sh initialization v1 ---/,/^# *# --- end runfiles.sh initialization v1 ---/p' \
+      "$runfiles_lib_path" | sed 's/^#       //'
+    echo 'rlocation r/f'
+  } > "$tmpdir/script.sh"
+  sh_path=$(command -v sh)
+
+  actual=$(RUNFILES_DIR= RUNFILES_MANIFEST_FILE="$tmpdir/manifest" RULES_SHELL_RUNFILES_USE_AWK=1 \
+    PATH=/nonexistent "$sh_path" "$tmpdir/script.sh")
+  [ "$actual" = "$tmpdir/f" ] || fail "expected $tmpdir/f without awk, got: $actual"
+}
+
 main() {
   manifest_file="${RUNFILES_MANIFEST_FILE:-}"
   dir="${RUNFILES_DIR:-}"
@@ -1376,6 +1401,7 @@ main() {
     test_awk_enabled_by_switch
     test_awk_enabled_by_program
     test_awk_falls_back_when_program_is_missing
+    test_survives_without_awk
   "
   failure=0
   for t in $tests; do

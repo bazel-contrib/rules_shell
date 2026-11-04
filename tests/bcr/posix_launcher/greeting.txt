@@ -1,1 +1,0 @@
-hello from rules_shell

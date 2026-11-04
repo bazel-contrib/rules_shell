@@ -15,23 +15,20 @@
 # limitations under the License.
 
 # Runfiles lookup library for Bazel-built shell binaries and tests, in POSIX
-# shell. Forks nothing unless asked to.
+# shell.
 #
 # This file is the implementation behind both @rules_shell//shell/runfiles
 # entry points. Sourced directly, it is the pure POSIX library. runfiles.bash,
-# next to it, is a thin wrapper that sources it with awk enabled by default,
-# for scripts written against the grep-based bash library that Bazel shipped
-# ("the historical bash library" below). It exposes that library's public API
-# -- rlocation, runfiles_export_envvars, runfiles_current_repository and
-# runfiles_rlocation_checked -- and passes its test suite. Under bash it keeps
-# the bash-specific behavior too: the caller's repository is detected from
-# BASH_SOURCE, and the functions are exported with `export -f`. Under any
+# next to it, sources it with awk enabled by default. The public API is
+# rlocation, runfiles_export_envvars, runfiles_current_repository and
+# runfiles_rlocation_checked. Under bash the caller's repository is detected
+# from BASH_SOURCE and the functions are exported with `export -f`. Under any
 # other shell, runfiles_current_repository needs the caller's script path as
 # its argument, rlocation without a second argument assumes the main
 # repository, and every script has to source the library itself.
 #
 # README.md in this directory covers what a lookup costs, the opt-in manifest
-# index, the launcher, and measurements.
+# index, and measurements.
 #
 # ENVIRONMENT
 #
@@ -51,16 +48,10 @@
 #   through runfiles.bash. Neither has an effect when AWK is set.
 # - RULES_SHELL_RUNFILES_CACHE=1: parse the manifest once, at source time, into
 #   an in-memory index instead of scanning it per lookup. See README.md.
-# - RULES_SHELL_RUNFILES_PORTABLE_INDEX=1: use the portable key mangling and
-#   case folding even under bash. For the test suite.
 #
 # Exported for child processes: RUNFILES_DIR, RUNFILES_MANIFEST_FILE and
-# JAVA_RUNFILES (by runfiles_export_envvars); RUNFILES_REPO_MAPPING, the path
-# of the repository mapping manifest; the platform detection results
-# _RLOCATION_ISABS_WINDOWS and _RLOCATION_CASE_INSENSITIVE; and the internal
-# configuration _RULES_SHELL_RUNFILES_INDEX_OK, _RULES_SHELL_RUNFILES_INDEX_FOLD,
-# _RULES_SHELL_RUNFILES_AWK and _RULES_SHELL_RUNFILES_NL, so that a bash process
-# inheriting the functions through `export -f` sees the same settings.
+# JAVA_RUNFILES (by runfiles_export_envvars), and RUNFILES_REPO_MAPPING, the
+# path of the repository mapping manifest.
 #
 # USAGE
 #
@@ -119,8 +110,7 @@ fi
 
 # Detects whether we are running in a Windows shell environment (MSYS2, MinGW
 # or Cygwin) and sets _RLOCATION_ISABS_WINDOWS / _RLOCATION_CASE_INSENSITIVE
-# accordingly. The historical bash library shells out to `uname -s | tr ...`
-# for this; here it is done with the environment and shell builtins only.
+# accordingly, from the environment and shell builtins.
 #
 # Signals, in order of reliability:
 #   1. MSYSTEM is set by every MSYS2, MinGW and Git-for-Windows shell.
@@ -128,7 +118,7 @@ fi
 #   3. /proc/version names the runtime on Cygwin and MSYS2 ("CYGWIN_NT-...",
 #      "MSYS_NT-...", "MINGW64_NT-..."). If the file exists and does not name
 #      one of those, we are on a Unix-like system and must not consult the
-#      Windows environment variables below -- WSL, for instance, can inherit
+#      Windows environment variables below; WSL, for instance, can inherit
 #      WINDIR from the host through WSLENV.
 #   4. Only when there is no /proc at all (so, not Linux and not Cygwin/MSYS)
 #      do WINDIR / SystemRoot indicate a Windows environment.
@@ -384,8 +374,8 @@ export _RULES_SHELL_RUNFILES_INDEX_FOLD
 # Return 0 iff the first ${#2} characters of $1, lowercased, equal $2, which
 # must already be lowercase: a prefix test that does not fold the whole line.
 #
-# Under bash 4 and later -- which is what Windows, the one case-insensitive
-# platform, runs -- ${var,,} folds a string in one builtin operation. The
+# Under bash 4 and later, which is what Windows, the one case-insensitive
+# platform, runs, ${var,,} folds a string in one builtin operation. The
 # portable variants loop over the characters; folding a string of length N
 # costs O(N^2) in most shells, since every append copies the output, which is
 # why the prefix test exists as its own loop that stops at the first mismatch.
@@ -441,13 +431,15 @@ else
 fi
 
 # A set AWK, or RULES_SHELL_RUNFILES_USE_AWK=1, searches manifests with awk
-# rather than a shell `read` loop, the way the historical bash library searched
-# them with grep: a fork per lookup, but one that reads the file in bulk, so
-# the cost stops growing with the manifest. AWK names the program, `awk` on
-# PATH when only the switch is set, and is expanded unquoted where it runs, as
-# that library expanded it. The index, when built, is still consulted first.
+# rather than a shell `read` loop: a fork per lookup, but one that reads the
+# file in bulk, so the cost stops growing with the manifest. Sourced through
+# runfiles.bash, which sets _rf_bash_wrapped, awk is on unless
+# RULES_SHELL_RUNFILES_USE_AWK=0. AWK names the program, `awk` on PATH
+# otherwise, and is expanded unquoted where it runs. The index, when built, is
+# still consulted first.
 _RULES_SHELL_RUNFILES_AWK=
-if [ -n "${AWK:-}" ] || [ "${RULES_SHELL_RUNFILES_USE_AWK:-}" = 1 ]; then
+if [ -n "${AWK:-}" ] || [ "${RULES_SHELL_RUNFILES_USE_AWK:-}" = 1 ] ||
+  { [ -n "${_rf_bash_wrapped:-}" ] && [ "${RULES_SHELL_RUNFILES_USE_AWK:-}" != 0 ]; }; then
   _RULES_SHELL_RUNFILES_AWK="${AWK:-awk}"
   if ! command -v "${_RULES_SHELL_RUNFILES_AWK%% *}" >/dev/null 2>&1; then
     __runfiles_debug "WARNING[runfiles.sh]: '$_RULES_SHELL_RUNFILES_AWK' cannot be found; searching manifests with shell loops"
@@ -541,9 +533,9 @@ else
 fi
 
 # Parse the manifest $1 into a fresh index, replacing any index already built.
-# Leaves the library without an index -- every lookup then scans, which is
-# always correct -- when $1 is not a file, when caching is off, or when keys
-# would have to be folded on a shell that cannot fold them cheaply.
+# Leaves the library without an index, so that every lookup scans, when $1 is
+# not a file, when caching is off, or when keys would have to be folded on a
+# shell that cannot fold them cheaply.
 __runfiles_index_build() {
   _rf_ix_file=
   [ -n "${_RULES_SHELL_RUNFILES_INDEX_OK:-}" ] || return 0
@@ -568,7 +560,7 @@ __runfiles_index_build() {
     # never one.
     [ -n "$_rf_ib_val" ] || _rf_ib_val="$_RULES_SHELL_RUNFILES_NL"
     # ${name=value} assigns only when name is unset, so the first entry for a
-    # key wins, matching the `grep -m1` the historical bash library does.
+    # key wins, as it does in a scan.
     eval ": \"\${${_rf_ix_pfx}${_rf_ck}=\$_rf_ib_val}\""
   done < "$1"
   _rf_ix_file="$1"
@@ -665,10 +657,9 @@ __runfiles_find_line_scan() {
 # rlocation path $1. This resolves a file that is only reachable through a
 # directory runfile, since a manifest lists the directory and not its contents.
 #
-# Resolving every prefix in one pass is a performance requirement rather than a
-# style choice. The historical bash library greps the manifest once per
-# candidate prefix, which stays cheap because grep reads the file in bulk,
-# while here every scan is a `read` loop costing microseconds per line.
+# Resolving every prefix in one pass matters: a scan is a `read` loop costing
+# microseconds per line, and one pass per candidate prefix would multiply that
+# by the depth of the path.
 #
 # Comparison happens in the manifest's own (escaped) domain, so that no line
 # has to be decoded during the scan; only the winning entry is decoded, by the
@@ -739,8 +730,8 @@ __runfiles_find_prefix_indexed() {
   while :; do
     __runfiles_cache_key "$_rf_fp_t" || return 1
     eval "_rf_fp_val=\"\${${_rf_ix_pfx}${_rf_ck}-}\""
-    # An entry with an empty value is treated as absent, as it is in the scan
-    # and in the historical bash library: it does not stop the walk.
+    # An entry with an empty value is treated as absent, as it is in the scan:
+    # it does not stop the walk.
     if [ -n "$_rf_fp_val" ] && [ "$_rf_fp_val" != "$_RULES_SHELL_RUNFILES_NL" ]; then
       _rf_fp_suffix="${_rf_fp_path#"$_rf_fp_t"}"
       return 0
@@ -778,10 +769,9 @@ __runfiles_find_prefix_awk() {
 
 # The shell-loop search behind __runfiles_find_prefix. The loop body runs once
 # per manifest line, so everything that is not needed to reject a line is
-# deferred -- in particular the value, which is never copied out of a line that
+# deferred, in particular the value, which is never copied out of a line that
 # does not match. The reject is a single quoted `case`: a manifest key can only
-# be a prefix of the path if the path starts with it, which is as selective as
-# the pattern the historical bash library hands to grep.
+# be a prefix of the path if the path starts with it.
 __runfiles_find_prefix_scan() {
   _rf_fp_klen=0
   if [ -n "$_RLOCATION_CASE_INSENSITIVE" ]; then
@@ -833,8 +823,8 @@ __runfiles_find_prefix_scan() {
     else
       _rf_fp_v="${_rf_fp_line#* }"
     fi
-    # An entry with an empty value is treated as absent, matching the
-    # historical bash library: it does not stop the walk up the path prefixes.
+    # An entry with an empty value is treated as absent: it does not stop the
+    # walk up the path prefixes.
     [ -n "$_rf_fp_v" ] || continue
     _rf_fp_key="$_rf_fp_k"
     _rf_fp_klen=${#_rf_fp_k}
@@ -910,8 +900,7 @@ __runfiles_find_by_target() {
 #
 # The mapping lists every repository visible from every repository in the
 # binary's runfiles, so it can run to thousands of lines; with awk enabled it
-# is searched by awk like the manifest, as the historical bash library searched
-# it with grep.
+# is searched by awk like the manifest.
 __runfiles_find_repo_mapping() {
   _rf_rm_src="$1"
   _rf_rm_pfx="$2"
@@ -1016,9 +1005,7 @@ __runfiles_parse_exec_path_repo() {
 # The optional second argument specifies the canonical name of the repository
 # whose repository mapping should be used to resolve the repository part of
 # the provided path. If not specified:
-#   * Under bash, the caller's repository is auto-detected via BASH_SOURCE,
-#     as the historical bash library did. Every bash script that sources
-#     runfiles.bash gets this file, so third-party callers depend on this.
+#   * Under bash, the caller's repository is auto-detected via BASH_SOURCE.
 #   * Under a pure POSIX shell there is no BASH_SOURCE, so the main repository
 #     is assumed. Portable callers should pass the source repo explicitly.
 rlocation() {
@@ -1052,8 +1039,8 @@ rlocation() {
         source_repo="$2"
       elif [ -n "${BASH_VERSION:-}" ]; then
         # Idx 2 walks past runfiles_current_repository and rlocation to the
-        # actual caller, mirroring runfiles.bash; BASH_SOURCE[1] here is that
-        # same frame, one call closer.
+        # actual caller; BASH_SOURCE[1] here is that same frame, one call
+        # closer.
         #
         # The answer depends only on the caller's script and on where the
         # runfiles live, and resolving it costs a command substitution plus,
@@ -1144,8 +1131,8 @@ runfiles_export_envvars() {
   fi
 
   # Lookups may now go through a manifest that was not in use when the library
-  # was sourced -- on Linux a `bazel test` starts with only RUNFILES_DIR set and
-  # the MANIFEST inside it is promoted above -- so bring the index and the
+  # was sourced (on Linux a `bazel test` starts with only RUNFILES_DIR set and
+  # the MANIFEST inside it is promoted above), so bring the index and the
   # memoized caller repository up to date. Both are no-ops unless
   # RULES_SHELL_RUNFILES_CACHE=1, and like sourcing, they only take effect in
   # the shell that runs this function.
@@ -1157,8 +1144,8 @@ runfiles_export_envvars() {
 
 # Resolve the repository of the script at $1 once, for rlocation to reuse
 # instead of resolving it on every call. Only the shell that sourced this file
-# can fill the memo -- rlocation runs in `$(...)`, so anything it stored would
-# die with the subshell -- so this runs at source time and again from
+# can fill the memo, since rlocation runs in `$(...)` and anything it stored
+# would die with the subshell, so this runs at source time and again from
 # runfiles_export_envvars, which changes the inputs the answer depends on. Does
 # nothing, and clears the memo, unless the index is on, the shell is bash and
 # there is a repo mapping for rlocation to consult.
@@ -1176,8 +1163,8 @@ __runfiles_memo_caller_repository() {
   _rf_rc_memo_key="$_rf_mc_key"
 }
 
-# Print the repository of a script that is not in the runfiles tree -- the
-# sh_binary entrypoint, or a binary run directly from bazel-bin -- parsed from
+# Print the repository of a script that is not in the runfiles tree (the
+# sh_binary entrypoint, or a binary run directly from bazel-bin), parsed from
 # its path under the execroot: empty for the main repository. $1 is the
 # normalized path, $2 the argument runfiles_current_repository was called
 # with, for the diagnostic.
@@ -1195,11 +1182,9 @@ __runfiles_print_exec_path_repository() {
 # script.
 #
 # Calling convention:
-#   * Under bash, this matches the historical bash library: the optional
-#     first argument is a numeric index N (default 1) selecting the N-th
-#     caller via BASH_SOURCE. This lets bash consumers that source this file
-#     -- directly or via the launcher -- call runfiles_current_repository with
-#     no arguments.
+#   * Under bash, the optional first argument is a numeric index N (default
+#     1) selecting the N-th caller via BASH_SOURCE, so bash consumers can call
+#     runfiles_current_repository with no arguments.
 #   * Under a POSIX shell there is no BASH_SOURCE, so the caller must supply
 #     its own script path as the first argument:
 #
@@ -1347,7 +1332,7 @@ __runfiles_normalize_rlocation_path() {
 }
 
 # Resolve the target $2 of the manifest entry $1, with $3 appended, to a path in
-# the file system, and print it -- or an empty line if there is no such file.
+# the file system, and print it, or an empty line if there is no such file.
 # $4 is the current lookup depth.
 #
 # Bazel copies the target of an unresolved symlink (ctx.actions.declare_symlink)
@@ -1428,8 +1413,8 @@ runfiles_rlocation_checked() {
     # index when there is one, else by awk or by a scan that rejects a line
     # with a single `case`.
     #
-    # An entry with an empty value counts as absent, matching the historical
-    # bash library, hence the test on _rf_fl_val rather than on the exit status.
+    # An entry with an empty value counts as absent, hence the test on
+    # _rf_fl_val rather than on the exit status.
     local result=
     if __runfiles_find_line "${escaped:+ }$search_key" "$RUNFILES_MANIFEST_FILE" &&
       [ -n "$_rf_fl_val" ]; then

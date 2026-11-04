@@ -1,4 +1,5 @@
 load("@rules_shellcheck//:def.bzl", "shellcheck_test")
+load("//shell:sh_binary.bzl", "sh_binary")
 load("//shell:sh_test.bzl", "sh_test")
 
 # The bash suite against the library as every bash script sees it: through
@@ -113,6 +114,33 @@ shellcheck_test(
     severity = "warning",
     # Fails on Windows with:
     # '..' is not recognized as an internal or external command, operable program or batch file.
+    target_compatible_with = select({
+        "@platforms//os:windows": ["@platforms//:incompatible"],
+        "//conditions:default": [],
+    }),
+)
+
+# Produces the measurement table in shell/runfiles/README.md; see the script
+# for its arguments.
+sh_binary(
+    name = "benchmark",
+    srcs = ["benchmark.sh"],
+    data = [
+        "//shell/runfiles:runfiles.bash",
+        "//shell/runfiles:runfiles.sh",
+    ],
+    env = {
+        "RUNFILES_BASH": "$(rlocationpath //shell/runfiles:runfiles.bash)",
+        "RUNFILES_SH": "$(rlocationpath //shell/runfiles:runfiles.sh)",
+    },
+    tags = ["manual"],
+)
+
+shellcheck_test(
+    name = "benchmark_shellcheck_test",
+    data = ["benchmark.sh"],
+    format = "gcc",
+    severity = "warning",
     target_compatible_with = select({
         "@platforms//os:windows": ["@platforms//:incompatible"],
         "//conditions:default": [],

@@ -723,7 +723,7 @@ function test_directory_based_envvars() {
 
 # runfiles.bash is a wrapper around runfiles.sh that enables awk unless the
 # caller has decided: AWK wins if set, RULES_SHELL_RUNFILES_USE_AWK=0 keeps the
-# shell loops. The wrapper must not leave AWK behind in the sourcing shell.
+# shell loops. The wrapper must not touch AWK or leave temporaries behind.
 # Only meaningful when the library under test is reached through the wrapper.
 function test_runfiles_bash_awk_default() {
   if [[ "$_RUNFILES_LIBRARY_FILE" != *runfiles.bash ]]; then
@@ -743,7 +743,7 @@ function test_runfiles_bash_awk_default() {
         || fail "expected the shell loops without awk on PATH"
     fi
     [[ -z "${AWK+x}" ]] || fail "the wrapper leaked AWK='${AWK}' into the environment"
-    [[ -z "${_rf_bash_wrapped+x}" && -z "${_rf_bash_dir+x}" && -z "${_rf_bash_awk+x}" ]] \
+    [[ -z "${_rf_bash_wrapped+x}" && -z "${_rf_bash_dir+x}" ]] \
       || fail "the wrapper leaked its temporaries into the environment"
   ) || fail
 
@@ -761,15 +761,14 @@ function test_runfiles_bash_awk_default() {
     source "$runfiles_lib_path" || fail
     [[ "$AWK" == /no/such/awk || "${_RULES_SHELL_RUNFILES_AWK:-}" == "$AWK" ]] \
       || fail "expected a set AWK to be used as is, got '${_RULES_SHELL_RUNFILES_AWK:-}'"
-    [[ -n "${AWK+x}" ]] || fail "the wrapper must not unset an AWK it did not set"
+    [[ -n "${AWK+x}" ]] || fail "the wrapper must not unset AWK"
   ) || fail
 }
 
-# Everything the historical runfiles.bash exported has to stay exported through
-# the wrapper, variables and functions alike, so that a script which inherited
-# them across exec keeps finding them. Checked from a child bash, which only
-# sees what was exported.
-function test_runfiles_bash_exports_legacy_symbols() {
+# The public API stays exported through the wrapper, so that a script which
+# inherited it across exec keeps finding it. Checked from a child bash, which
+# only sees what was exported.
+function test_runfiles_bash_exports_public_api() {
   if [[ "$_RUNFILES_LIBRARY_FILE" != *runfiles.bash ]]; then
     return 0
   fi
@@ -778,24 +777,13 @@ function test_runfiles_bash_exports_legacy_symbols() {
   source "$runfiles_lib_path"
 
   local f
-  for f in __runfiles_maybe_grep __runfiles_escape_grep \
-      __runfiles_normalize_rlocation_path __runfiles_resolve_manifest_target \
-      rlocation runfiles_export_envvars runfiles_current_repository \
+  for f in rlocation runfiles_export_envvars runfiles_current_repository \
       runfiles_rlocation_checked; do
     bash -c "[[ \"\$(type -t $f)\" == function ]]" \
       || fail "expected $f to be exported as a function"
   done
-  local v
-  for v in _RLOCATION_ISABS_PATTERN _RLOCATION_GREP_CASE_INSENSITIVE_ARGS RUNFILES_REPO_MAPPING; do
-    bash -c "[[ -n \"\${$v+x}\" ]]" || fail "expected $v to be exported"
-  done
-  if is_windows; then
-    [[ "$_RLOCATION_GREP_CASE_INSENSITIVE_ARGS" == -i && "c:/Foo" =~ $_RLOCATION_ISABS_PATTERN ]] || fail
-  else
-    [[ -z "$_RLOCATION_GREP_CASE_INSENSITIVE_ARGS" && "/Foo" =~ $_RLOCATION_ISABS_PATTERN ]] || fail
-  fi
-  [[ "$(__runfiles_escape_grep 'a.b*c')" == 'a\.b\*c' ]] || fail
-  [[ "$(echo "x y" | __runfiles_maybe_grep -c nomatch)" == 0 ]] || fail
+  bash -c '[[ -n "${RUNFILES_REPO_MAPPING+x}" ]]' \
+    || fail "expected RUNFILES_REPO_MAPPING to be exported"
 }
 
 # With the index on, sourcing the library resolves the sourcing script's
@@ -824,6 +812,34 @@ function test_caller_repository_memo_keyed_to_sourcing_script() {
   [[ "${_rf_rc_memo_key:-}" == "${BASH_SOURCE[0]}|$RUNFILES_DIR/MANIFEST|"* ]] \
     || fail "expected runfiles_export_envvars to re-key the memo, got '${_rf_rc_memo_key:-}'"
   [[ "$(rlocation my_module/f "" || echo failed)" == "$RUNFILES_DIR/_main/f" ]] || fail
+}
+
+# The v4 snippet, taken from the wrapper's own header, and the wrapper have to
+# work on a host without awk: the snippet's awk attempt fails and its shell
+# loop takes over, and runfiles.sh keeps its shell loops instead of the awk the
+# wrapper asks for.
+function test_runfiles_bash_survives_without_awk() {
+  if [[ "$_RUNFILES_LIBRARY_FILE" != *runfiles.bash ]]; then
+    return 0
+  fi
+  local tmpdir="$(mktemp -d $TEST_TMPDIR/tmp.XXXXXXXX)"
+  local lib_dir="$tmpdir/lib/bazel_tools/tools/bash/runfiles"
+  mkdir -p "$lib_dir"
+  cp "$runfiles_lib_path" "$lib_dir/runfiles.bash"
+  cp "$(dirname "$runfiles_lib_path")/runfiles.sh" "$lib_dir/runfiles.sh"
+  touch "$tmpdir/f"
+  printf 'r/f %s\nbazel_tools/tools/bash/runfiles/runfiles.bash %s\n' "$tmpdir/f" \
+    "$lib_dir/runfiles.bash" > "$tmpdir/manifest"
+  {
+    echo '#!/usr/bin/env bash'
+    sed -n '/^# *# --- begin runfiles.bash initialization v4 ---/,/^# *# --- end runfiles.bash initialization v4 ---/p' \
+      "$runfiles_lib_path" | sed 's/^#       //'
+    echo 'rlocation r/f'
+  } > "$tmpdir/script.sh"
+
+  local actual
+  actual=$(RUNFILES_DIR= RUNFILES_MANIFEST_FILE="$tmpdir/manifest" PATH=/nonexistent "$BASH" "$tmpdir/script.sh")
+  [[ "$actual" == "$tmpdir/f" ]] || fail "expected $tmpdir/f without awk, got: $actual"
 }
 
 function test_with_grep_env_vars_set() {

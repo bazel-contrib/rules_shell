@@ -12,24 +12,23 @@
 # See the License for the specific language governing permissions and
 # limitations under the License.
 
-# Runfiles lookup library for Bazel-built Bash binaries and tests, version 3.
+# Runfiles lookup library for Bazel-built Bash binaries and tests, version 4.
 #
 # This file is the bash entry point to the runfiles library. The implementation
-# is runfiles.sh, next to this file, which this file sources; README.md in this
-# directory describes both. It adds one default: unless AWK is set or
-# RULES_SHELL_RUNFILES_USE_AWK=0, manifests are searched with `awk` from PATH,
-# so that scripts written for the historical grep-based runfiles.bash keep
-# lookups whose cost does not grow with the manifest. If there is no awk,
-# runfiles.sh falls back to its shell loops.
-#
-# Everything the historical runfiles.bash exported is still exported here: the
-# public functions, RUNFILES_REPO_MAPPING, _RLOCATION_ISABS_PATTERN and
-# _RLOCATION_GREP_CASE_INSENSITIVE_ARGS, and the `__runfiles_*` helpers, two of
-# which live at the end of this file for that reason alone. The helpers are not
-# API; __runfiles_normalize_rlocation_path now stores its result in _rf_np_out
-# instead of printing it.
+# is runfiles.sh, next to this file, which this file sources with awk enabled
+# unless AWK is set or RULES_SHELL_RUNFILES_USE_AWK=0; README.md in this
+# directory describes both.
 #
 # VERSION HISTORY:
+# - version 4: The init code resolves the library's location before sourcing
+#              it, instead of sourcing each candidate location in turn.
+#   Features:
+#     - Errors the library prints while it is sourced are no longer hidden.
+#     - The manifest is searched with awk, or a shell loop, instead of grep
+#       and cut.
+#   Compatibility:
+#     - The init script and the runfiles library are backwards and forwards
+#       compatible with versions 2 and 3.
 # - version 3: Fixes a bug in the init code on macOS and makes the library aware
 #              of Bzlmod repository mappings.
 #   Features:
@@ -83,18 +82,25 @@
 #     up the library's runtime location, thus we have a chicken-and-egg problem.
 #     Insert the following code snippet to the top of your main script:
 #
-#       # --- begin runfiles.bash initialization v3 ---
-#       # Copy-pasted from the Bazel Bash runfiles library v3.
-#       set -uo pipefail; set +e; f=bazel_tools/tools/bash/runfiles/runfiles.bash
+#       # --- begin runfiles.bash initialization v4 ---
+#       # Copy-pasted from the Bazel Bash runfiles library v4.
+#       set -uo pipefail; set +e; f=bazel_tools/tools/bash/runfiles/runfiles.bash; _rf_p=; _rf_a=
+#       if [ -n "${AWK:-}" ] || [ "${RULES_SHELL_RUNFILES_USE_AWK:-}" != 0 ]; then _rf_a=1; fi
+#       _rf_d() { [ -f "$1/$f" ] && _rf_p="$1/$f"; }
+#       _rf_m() { [ -f "$1" ] || return 1; if [ -n "$_rf_a" ]; then \
+#         _rf_p=$(${AWK:-awk} -v k="$f " 'index($0,k)==1{print substr($0,length(k)+1);m=1;exit}END{exit !m}' "$1" 2>/dev/null) && return; fi; \
+#         while IFS= read -r _rf_l || [ -n "$_rf_l" ]; do \
+#         case "$_rf_l" in "$f "*) _rf_p="${_rf_l#"$f "}"; return;; esac; done < "$1"; return 1; }
+#       _rf_d "${RUNFILES_DIR:-/dev/null}" || _rf_m "${RUNFILES_MANIFEST_FILE:-/dev/null}" || \
+#         _rf_d "$0.runfiles" || _rf_m "$0.runfiles_manifest" || _rf_m "$0.exe.runfiles_manifest" || \
+#         { echo>&2 "ERROR: cannot find $f"; exit 1; }
 #       # shellcheck disable=SC1090
-#       source "${RUNFILES_DIR:-/dev/null}/$f" 2>/dev/null || \
-#         source "$(grep -sm1 "^$f " "${RUNFILES_MANIFEST_FILE:-/dev/null}" | cut -f2- -d' ')" 2>/dev/null || \
-#         source "$0.runfiles/$f" 2>/dev/null || \
-#         source "$(grep -sm1 "^$f " "$0.runfiles_manifest" | cut -f2- -d' ')" 2>/dev/null || \
-#         source "$(grep -sm1 "^$f " "$0.exe.runfiles_manifest" | cut -f2- -d' ')" 2>/dev/null || \
-#         { echo>&2 "ERROR: cannot find $f"; exit 1; }; f=; set -e
-#       # --- end runfiles.bash initialization v3 ---
+#       source "$_rf_p"; f=; unset -f _rf_d _rf_m; unset _rf_l _rf_p _rf_a; set -e
+#       # --- end runfiles.bash initialization v4 ---
 #
+#     `_rf_d` checks a runfiles directory and `_rf_m` searches a manifest, with
+#     awk unless RULES_SHELL_RUNFILES_USE_AWK=0 and a shell loop otherwise, so
+#     that only an existing file is sourced. The v3 snippet keeps working.
 #
 # 3.  Use rlocation to look up runfile paths.
 #
@@ -109,61 +115,21 @@
 # entry for this file points at the source tree, so the same holds there.
 _rf_bash_dir="${BASH_SOURCE[0]%/*}"
 [[ "$_rf_bash_dir" == "${BASH_SOURCE[0]}" ]] && _rf_bash_dir=.
+# A missing runfiles.sh fails the source the way a missing runfiles.bash does.
+# The message is visible with the v4 snippet and the launcher; the v3 snippet
+# redirects stderr.
 if [[ ! -f "$_rf_bash_dir/runfiles.sh" ]]; then
   echo >&2 "ERROR[runfiles.bash]: cannot find runfiles.sh next to ${BASH_SOURCE[0]}"
   unset _rf_bash_dir
   return 1
 fi
 
-# Enable awk unless the caller has made a choice. AWK is only set for the
-# duration of the source: runfiles.sh records the program it will use in an
-# exported variable of its own, so neither this shell nor its children need AWK
-# in their environment afterwards.
-_rf_bash_awk=
-if [[ -z "${AWK:-}" && "${RULES_SHELL_RUNFILES_USE_AWK:-}" != 0 ]]; then
-  _rf_bash_awk=1
-  AWK="awk"
-fi
-
-# Tells runfiles.sh that it is being sourced through this file, so that it
-# looks one frame further up BASH_SOURCE for the script that sourced it.
+# Tells runfiles.sh that it is being sourced through this file: it then enables
+# awk unless RULES_SHELL_RUNFILES_USE_AWK=0, and looks one frame further up
+# BASH_SOURCE for the script that sourced it.
 _rf_bash_wrapped=1
 
 # shellcheck disable=SC1091
 source "$_rf_bash_dir/runfiles.sh"
 
-[[ -n "$_rf_bash_awk" ]] && unset AWK
-unset _rf_bash_dir _rf_bash_awk _rf_bash_wrapped
-
-# --- Exported by the historical runfiles.bash, kept for compatibility ---
-
-# runfiles.sh detects the platform with shell builtins and records it in
-# _RLOCATION_ISABS_WINDOWS / _RLOCATION_CASE_INSENSITIVE; these are the
-# grep-era spellings of the same answer.
-if [[ -n "${_RLOCATION_ISABS_WINDOWS:-}" ]]; then
-  # matches an absolute Windows path
-  export _RLOCATION_ISABS_PATTERN="^[a-zA-Z]:[/\\]"
-  # Windows paths are case insensitive and Bazel and MSYS2 capitalize differently, so we can't
-  # assume that all paths are in the same native case.
-  export _RLOCATION_GREP_CASE_INSENSITIVE_ARGS=-i
-else
-  # matches an absolute Unix path
-  export _RLOCATION_ISABS_PATTERN="^/[^/].*"
-  export _RLOCATION_GREP_CASE_INSENSITIVE_ARGS=
-fi
-
-# Does not exit with a non-zero exit code if no match is found and performs a case-insensitive
-# search on Windows.
-function __runfiles_maybe_grep() {
-  # The GREP_XXX variables influence how grep behaves. Specifically, they can
-  # affect the output from the grep command.
-  GREP_COLOR="" GREP_OPTIONS="" grep $_RLOCATION_GREP_CASE_INSENSITIVE_ARGS "$@" || test $? = 1;
-}
-export -f __runfiles_maybe_grep
-
-# Escape the argument for use in a grep regex.
-# This is used to escape paths that may contain special characters.
-function __runfiles_escape_grep() {
-  echo -n "$1" | sed 's/[.[\*^$]/\\&/g'
-}
-export -f __runfiles_escape_grep
+unset _rf_bash_dir _rf_bash_wrapped
