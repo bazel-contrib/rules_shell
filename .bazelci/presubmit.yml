@@ -5,7 +5,9 @@ buildifier: 8.2.1
 matrix:
   platform:
     - ubuntu2004
+    - ubuntu2004_arm64
     - macos
+    - macos_arm64
     - windows
   legacy_bazel:
     - 7.*
@@ -62,3 +64,46 @@ tasks:
       - "//tests/..."
     test_targets:
       - "//tests/..."
+  test_posix_shell_runfiles:
+    # Explicit dash coverage for the POSIX shell runfiles library. Local
+    # repro: bazel test --config=posix_shell //tests/runfiles/...
+    name: "POSIX Runfiles (dash, ${{modern_bazel}})"
+    bazel: ${{ modern_bazel }}
+    platform: ubuntu2004
+    shell_commands:
+      - "/bin/dash -c 'echo dash ready'"
+    build_flags:
+      - "--config=posix_shell"
+    build_targets:
+      - "//tests/runfiles:runfiles_sh_test"
+      - "//tests/runfiles:runfiles_sh_awk_test"
+    test_flags:
+      - "--config=posix_shell"
+      # Fail rather than pass under bash if /bin/sh on the CI image ever changes.
+      - "--test_env=RUNFILES_TEST_REQUIRE_POSIX_SH=1"
+    test_targets:
+      - "//tests/runfiles:runfiles_sh_test"
+      - "//tests/runfiles:runfiles_sh_awk_test"
+  test_module_posix_shell_runfiles:
+    # Dash coverage for a consuming module. This is what exercises the
+    # `use_bash_launcher` launcher snippet under a non-bash sh_toolchain; see
+    # tests/bcr/posix_launcher, whose scripts initialize the runfiles library
+    # themselves because a POSIX shell cannot export functions across exec.
+    name: "Test module (POSIX Runfiles, dash, ${{modern_bazel}})"
+    working_directory: "tests/bcr"
+    bazel: ${{ modern_bazel }}
+    platform: ubuntu2004
+    shell_commands:
+      - "/bin/dash -c 'echo dash ready'"
+    build_flags:
+      - "--config=posix_shell"
+    build_targets:
+      - "//..."
+      # The bash launcher targets deliberately rely on bash exporting the
+      # runfiles functions across exec, which no POSIX shell can do.
+      - "-//bash_launcher/..."
+    test_flags:
+      - "--config=posix_shell"
+    test_targets:
+      - "//..."
+      - "-//bash_launcher/..."
