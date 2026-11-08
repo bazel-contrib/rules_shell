@@ -1360,6 +1360,26 @@ test_survives_without_awk() {
   [ "$actual" = "$tmpdir/f" ] || fail "expected $tmpdir/f without awk, got: $actual"
 }
 
+# The snippet sources the first library it finds, so a library that fails to
+# load has to abort the script rather than leave it without rlocation.
+test_init_snippet_aborts_when_library_fails() {
+  tmpdir="$TEST_TMPDIR/test_init_snippet_aborts_when_library_fails"
+  rm -rf "$tmpdir"
+  mkdir -p "$tmpdir/broken/rules_shell/shell/runfiles"
+  echo 'return 1' > "$tmpdir/broken/rules_shell/shell/runfiles/runfiles.sh"
+  {
+    echo '#!/bin/sh'
+    sed -n '/^# *# --- begin runfiles.sh initialization v1 ---/,/^# *# --- end runfiles.sh initialization v1 ---/p' \
+      "$runfiles_lib_path" | sed 's/^#       //'
+    echo 'echo reached'
+  } > "$tmpdir/script.sh"
+
+  if output=$(RUNFILES_DIR="$tmpdir/broken" RUNFILES_MANIFEST_FILE= sh "$tmpdir/script.sh" 2>&1); then
+    fail "expected the snippet to abort, got: $output"
+  fi
+  [ "${output#*reached}" = "$output" ] || fail "expected the script not to run past the snippet"
+}
+
 main() {
   manifest_file="${RUNFILES_MANIFEST_FILE:-}"
   dir="${RUNFILES_DIR:-}"
@@ -1402,6 +1422,7 @@ main() {
     test_awk_enabled_by_program
     test_awk_falls_back_when_program_is_missing
     test_survives_without_awk
+    test_init_snippet_aborts_when_library_fails
   "
   failure=0
   for t in $tests; do

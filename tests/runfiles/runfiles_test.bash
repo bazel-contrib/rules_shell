@@ -842,6 +842,33 @@ function test_runfiles_bash_survives_without_awk() {
   [[ "$actual" == "$tmpdir/f" ]] || fail "expected $tmpdir/f without awk, got: $actual"
 }
 
+# The v4 snippet sources the first library it finds, so a library that fails
+# to load has to abort the script rather than leave it without rlocation. A
+# runfiles directory from before runfiles.sh existed has runfiles.bash and
+# nothing for it to source.
+function test_runfiles_bash_init_aborts_when_library_fails() {
+  if [[ "$_RUNFILES_LIBRARY_FILE" != *runfiles.bash ]]; then
+    return 0
+  fi
+  local tmpdir="$(mktemp -d $TEST_TMPDIR/tmp.XXXXXXXX)"
+  mkdir -p "$tmpdir/stale/bazel_tools/tools/bash/runfiles"
+  cp "$runfiles_lib_path" "$tmpdir/stale/bazel_tools/tools/bash/runfiles/runfiles.bash"
+  touch "$tmpdir/f"
+  printf 'r/f %s\n' "$tmpdir/f" > "$tmpdir/manifest"
+  {
+    echo '#!/usr/bin/env bash'
+    sed -n '/^# *# --- begin runfiles.bash initialization v4 ---/,/^# *# --- end runfiles.bash initialization v4 ---/p' \
+      "$runfiles_lib_path" | sed 's/^#       //'
+    echo 'echo reached'
+  } > "$tmpdir/script.sh"
+
+  local output
+  if output=$(RUNFILES_DIR="$tmpdir/stale" RUNFILES_MANIFEST_FILE="$tmpdir/manifest" "$BASH" "$tmpdir/script.sh" 2>&1); then
+    fail "expected the snippet to abort, got: $output"
+  fi
+  [[ "$output" != *reached* ]] || fail "expected the script not to run past the snippet"
+}
+
 function test_with_grep_env_vars_set() {
   # These influence how grep behaves.
   export GREP_COLOR='1;35;40'

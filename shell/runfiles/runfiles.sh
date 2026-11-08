@@ -79,7 +79,7 @@
 #         _rf_d "$0.runfiles" || _rf_m "$0.runfiles_manifest" || _rf_m "$0.exe.runfiles_manifest" || \
 #         { echo>&2 "ERROR: cannot find $f"; exit 1; }
 #       # shellcheck disable=SC1090
-#       . "$_rf_p"; f=; unset -f _rf_d _rf_m; unset _rf_l _rf_p; set -e
+#       . "$_rf_p" || { echo>&2 "ERROR: cannot source $_rf_p"; exit 1; }; f=; unset -f _rf_d _rf_m; unset _rf_l _rf_p; set -e
 #       # --- end runfiles.sh initialization v1 ---
 #
 #     `.` on a missing file is fatal in a POSIX shell, so the snippet resolves

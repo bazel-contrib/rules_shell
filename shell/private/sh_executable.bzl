@@ -45,7 +45,7 @@ _rf_d "${{RUNFILES_DIR:-/dev/null}}" || _rf_m "${{RUNFILES_MANIFEST_FILE:-/dev/n
   _rf_d "$0.runfiles" || _rf_m "$0.runfiles_manifest" || _rf_m "$0.exe.runfiles_manifest" || \
   {{ echo>&2 "ERROR: cannot find $f"; exit 1; }}
 # shellcheck disable=SC1090
-source "$_rf_p"; f=; unset -f _rf_d _rf_m; unset _rf_l _rf_p _rf_a; set -e
+source "$_rf_p" || { echo>&2 "ERROR: cannot source $_rf_p"; exit 1; }; f=; unset -f _rf_d _rf_m; unset _rf_l _rf_p _rf_a; set -e
 # --- end runfiles.bash initialization v4 ---
 RULES_SHELL_RUNFILES_CACHE="$_rf_c"; unset _rf_c
 
