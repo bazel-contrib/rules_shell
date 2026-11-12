@@ -19,6 +19,7 @@ load(":providers.bzl", "ShBinaryInfo", "ShInfo")
 visibility(["//shell"])
 
 _SH_TOOLCHAIN_TYPE = Label("//shell:toolchain_type")
+_LAUNCHER_MAKER_TOOLCHAIN_TYPE = Label("@bazel_tools//tools/launcher:launcher_maker_toolchain_type")
 
 def _to_rlocation_path(ctx, file):
     if file.short_path.startswith("../"):
@@ -135,8 +136,8 @@ def _is_windows_executable(file):
     return file.extension in _WINDOWS_EXECUTABLE_EXTENSIONS
 
 def _create_windows_exe_launcher(ctx, sh_toolchain, primary_output):
-    if not sh_toolchain.launcher or not sh_toolchain.launcher_maker:
-        fail("Windows sh_toolchain requires both 'launcher' and 'launcher_maker' to be set")
+    if not sh_toolchain.launcher:
+        fail("Windows sh_toolchain requires 'launcher' to be set")
 
     bash_launcher = ctx.actions.declare_file(ctx.label.name + ".exe")
 
@@ -154,12 +155,12 @@ def _create_windows_exe_launcher(ctx, sh_toolchain, primary_output):
 
     launcher_artifact = sh_toolchain.launcher
     ctx.actions.run(
-        executable = sh_toolchain.launcher_maker,
+        executable = ctx.toolchains[_LAUNCHER_MAKER_TOOLCHAIN_TYPE].binary,
         inputs = [launcher_artifact],
         outputs = [bash_launcher],
         arguments = [launcher_artifact.path, launch_info, bash_launcher.path],
         use_default_shell_env = True,
-        toolchain = _SH_TOOLCHAIN_TYPE,
+        toolchain = _LAUNCHER_MAKER_TOOLCHAIN_TYPE,
     )
     return bash_launcher
 
@@ -259,12 +260,14 @@ The file containing the shell script.
             "_runfiles_dep": attr.label(
                 default = Label("//shell/runfiles"),
             ),
+            "_use_auto_exec_groups": attr.bool(default = True),
             "_windows_constraint": attr.label(
                 default = "@platforms//os:windows",
             ),
         } | extra_attrs,
         toolchains = [
             config_common.toolchain_type(_SH_TOOLCHAIN_TYPE, mandatory = False),
+            config_common.toolchain_type(_LAUNCHER_MAKER_TOOLCHAIN_TYPE),
         ],
         provides = [ShBinaryInfo],
         **kwargs

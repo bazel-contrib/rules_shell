@@ -35,7 +35,6 @@ sh_toolchain(
     name = "{os}_sh",
     path = {sh_path},
     launcher = "@bazel_tools//tools/launcher",
-    launcher_maker = "@bazel_tools//tools/launcher:launcher_maker",
 )
 """
 
