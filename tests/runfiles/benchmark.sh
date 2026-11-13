@@ -20,8 +20,8 @@
 #
 # --baseline names a runfiles.bash to time alongside, for example the library
 # before this one: `git show 660e16c:shell/runfiles/runfiles.bash`. The POSIX
-# columns run under `sh`, whatever that is on the host, and the awk column
-# honors AWK.
+# columns run under `sh`, whatever that is on the host; the last one sets
+# RULES_SHELL_RUNFILES_USE_AWK=0, so that the shell loops search the manifests.
 set -euo pipefail
 
 baseline=
@@ -66,7 +66,7 @@ generate() {
 ms() {
   local shell="$1" lib="$2" extra="$3" body="$4" best=999999 t r
   for ((r = 0; r < runs; r++)); do
-    t=$( { TIMEFORMAT=%R; time env -u AWK -u RULES_SHELL_RUNFILES_USE_AWK -u RULES_SHELL_RUNFILES_CACHE $extra "$shell" -c ". '$lib'; $body" >/dev/null 2>&1; } 2>&1 )
+    t=$( { TIMEFORMAT=%R; time env -u AWK -u RULES_SHELL_RUNFILES_USE_AWK $extra "$shell" -c ". '$lib'; $body" >/dev/null 2>&1; } 2>&1 )
     t=$(awk -v t="$t" 'BEGIN { printf "%d", t * 1000 }')
     (( t < best )) && best=$t
   done
@@ -82,14 +82,14 @@ row() {
   cells+=" $(fmt "$(ms bash "$bash_lib" "$env" "$body")") |"
   cells+=" $(fmt "$(ms bash "$sh_lib" "$env" "$body")") |"
   cells+=" $(fmt "$(ms sh "$sh_lib" "$env" "$body")") |"
-  cells+=" $(fmt "$(ms sh "$sh_lib" "$env AWK=${AWK:-awk}" "$body")") |"
+  cells+=" $(fmt "$(ms sh "$sh_lib" "$env RULES_SHELL_RUNFILES_USE_AWK=0" "$body")") |"
   echo "| $label |$cells"
 }
 
 sh_name=$(sh -c 'echo "${BASH_VERSION:+bash $BASH_VERSION}"'); sh_name="${sh_name:-$(basename "$(readlink -f "$(command -v sh)")")}"
 header="| manifest |"; rule="|---|"
 [[ -n "$baseline" ]] && { header+=" baseline |"; rule+="---|"; }
-header+=" \`runfiles.bash\` | \`runfiles.sh\`, bash | \`runfiles.sh\`, sh | \`runfiles.sh\`, sh, awk |"; rule+="---|---|---|---|"
+header+=" \`runfiles.bash\` | \`runfiles.sh\`, bash | \`runfiles.sh\`, sh | \`runfiles.sh\`, sh, no awk |"; rule+="---|---|---|---|"
 echo "Shells: bash $BASH_VERSION, sh is $sh_name, awk is $(${AWK:-awk} --version 2>/dev/null | head -1 || echo "${AWK:-awk}"). Best of $runs."
 echo
 echo "$header"; echo "$rule"
@@ -118,4 +118,4 @@ for _ in 1 2 3 4 5 6 7 8 9 10; do
   done
 done
 echo
-echo "50 keys spread through the $last-line manifest: $(fmt "$(ms bash "$bash_lib" "$env" "$body")") through \`runfiles.bash\`, $(fmt "$(ms bash "$sh_lib" "$env" "$body")") with the shell loops under bash, $(fmt "$(ms bash "$sh_lib" "$env RULES_SHELL_RUNFILES_CACHE=1" "$body")") with \`RULES_SHELL_RUNFILES_CACHE=1\`."
+echo "50 keys spread through the $last-line manifest: $(fmt "$(ms bash "$bash_lib" "$env" "$body")") through \`runfiles.bash\`, $(fmt "$(ms bash "$sh_lib" "$env RULES_SHELL_RUNFILES_USE_AWK=0" "$body")") with the shell loops under bash."

@@ -100,7 +100,11 @@ if ! [ -d "${RUNFILES_DIR:-/dev/null}" ] && ! [ -f "${RUNFILES_MANIFEST_FILE:-/d
     export RUNFILES_MANIFEST_FILE="$0.runfiles_manifest"
   elif [ -f "$0.runfiles/MANIFEST" ]; then
     export RUNFILES_MANIFEST_FILE="$0.runfiles/MANIFEST"
-  elif [ -f "$0.runfiles/rules_shell/shell/runfiles/runfiles.sh" ]; then
+  # The library under either name //shell/runfiles installs it as: a tree
+  # that only has the legacy bazel_tools one, as Bazel's own runfiles target
+  # builds it, is a runfiles directory all the same.
+  elif [ -f "$0.runfiles/rules_shell/shell/runfiles/runfiles.sh" ] \
+    || [ -f "$0.runfiles/bazel_tools/tools/bash/runfiles/runfiles.bash" ]; then
     export RUNFILES_DIR="$0.runfiles"
   fi
 fi
@@ -198,7 +202,9 @@ __runfiles_is_abs() {
   return 1
 }
 
-# Replace one or more consecutive backslashes with a single forward slash.
+# Replace one or more consecutive backslashes with a single forward slash, into
+# _rf_nb_out. Stored rather than printed so that finding the caller's
+# repository, which rlocation does on every lookup under bash, forks nothing.
 # Equivalent to: sed 's|\\\\*|/|g'
 __runfiles_normalize_backslashes() {
   _rf_nb_in="$1"
@@ -220,7 +226,6 @@ __runfiles_normalize_backslashes() {
         ;;
     esac
   done
-  printf '%s' "$_rf_nb_out"
 }
 
 # Replace all occurrences of $2 in $1 with $3, into _rf_gs_out. Stored rather
@@ -592,21 +597,22 @@ __runfiles_find_prefix_scan() {
 }
 
 # Find the first non-escaped manifest line whose value (target path) matches
-# $1. Prints the key (rlocation path) on stdout.
-# On Windows, matching is case-insensitive.
+# $1 and store its key (rlocation path) in _rf_ft_out; returns 1 if there is
+# none. On Windows, matching is case-insensitive.
 __runfiles_find_by_target() {
   _rf_ft_target="$1"
   _rf_ft_file="$2"
+  _rf_ft_out=
 
   if [ -n "${_RULES_SHELL_RUNFILES_AWK:-}" ]; then
-    __runfiles_awk '
+    _rf_ft_out=$(__runfiles_awk '
       BEGIN { t = ARGV[1]; c = ARGV[2]; ARGV[1] = ARGV[2] = ""; if (c) t = tolower(t) }
       substr($0, 1, 1) == " " { next }
       { i = index($0, " "); if (i == 0) next
         v = substr($0, i + 1); if (c) v = tolower(v)
         if (v == t) { printf "%s", substr($0, 1, i - 1); f = 1; exit } }
-      END { exit !f }' "$_rf_ft_file" "$_rf_ft_target" "$_RLOCATION_CASE_INSENSITIVE"
-    return
+      END { exit !f }' "$_rf_ft_file" "$_rf_ft_target" "$_RLOCATION_CASE_INSENSITIVE") || return 1
+    return 0
   fi
 
   if [ -n "$_RLOCATION_CASE_INSENSITIVE" ]; then
@@ -621,7 +627,7 @@ __runfiles_find_by_target() {
       # can't match.
       [ "${#_rf_ft_val}" = "$_rf_ft_tlen" ] || continue
       if __runfiles_line_starts_with_ci "$_rf_ft_val" "$_rf_ft_ltgt"; then
-        printf '%s' "$_rf_ft_key"
+        _rf_ft_out="$_rf_ft_key"
         return 0
       fi
     done < "$_rf_ft_file"
@@ -639,7 +645,7 @@ __runfiles_find_by_target() {
       _rf_ft_key="${_rf_ft_line%% *}"
       _rf_ft_val="${_rf_ft_line#* }"
       if [ "$_rf_ft_val" = "$_rf_ft_target" ]; then
-        printf '%s' "$_rf_ft_key"
+        _rf_ft_out="$_rf_ft_key"
         return 0
       fi
     done < "$_rf_ft_file"
@@ -707,13 +713,14 @@ __runfiles_find_repo_mapping() {
   return 1
 }
 
-# Parse the repository name from an exec path.
+# Parse the repository name from an exec path, into _rf_pe_out.
 # Scans path segments for /bazel-out/<config>/bin/external/<repo>/ or
-# /bazel-bin/external/<repo>/ and returns the last matching <repo>.
+# /bazel-bin/external/<repo>/ and keeps the last matching <repo>; returns 1 if
+# there is none.
 # Equivalent to: grep -E -o '...' | tail -1 | awk -F/ '{print $(NF-1)}'
 __runfiles_parse_exec_path_repo() {
   _rf_pe_path="$1"
-  _rf_pe_result=""
+  _rf_pe_out=""
   _rf_pe_rest="$_rf_pe_path"
 
   # Track last 4 path segments via a sliding window.
@@ -733,12 +740,12 @@ __runfiles_parse_exec_path_repo() {
     # Pattern: bazel-bin/external/<repo>
     if [ "$_rf_pe_p2" = "bazel-bin" ] && [ "$_rf_pe_p1" = "external" ] \
        && [ -n "$_rf_pe_seg" ]; then
-      _rf_pe_result="$_rf_pe_seg"
+      _rf_pe_out="$_rf_pe_seg"
     fi
     # Pattern: bazel-out/<config>/bin/external/<repo>
     if [ "$_rf_pe_p4" = "bazel-out" ] && [ "$_rf_pe_p2" = "bin" ] \
        && [ "$_rf_pe_p1" = "external" ] && [ -n "$_rf_pe_seg" ]; then
-      _rf_pe_result="$_rf_pe_seg"
+      _rf_pe_out="$_rf_pe_seg"
     fi
 
     _rf_pe_p4="$_rf_pe_p3"
@@ -749,11 +756,7 @@ __runfiles_parse_exec_path_repo() {
     [ -z "$_rf_pe_rest" ] && break
   done
 
-  if [ -n "$_rf_pe_result" ]; then
-    printf '%s' "$_rf_pe_result"
-    return 0
-  fi
-  return 1
+  [ -n "$_rf_pe_out" ]
 }
 
 # --- Public API ---
@@ -795,11 +798,11 @@ rlocation() {
       if [ -n "${2+x}" ]; then
         _rf_rl_source_repo="$2"
       elif [ -n "${BASH_VERSION:-}" ]; then
-        # Idx 2 walks past runfiles_current_repository and rlocation to the
-        # actual caller. `|| true` preserves whatever repo name the
-        # parse-exec-path fallback already printed to stdout, mirroring bash's
-        # `local -r x=$(...)`, where `local` masks the subshell's exit code.
-        _rf_rl_source_repo="$(runfiles_current_repository 2 || true)"
+        # Idx 1 is rlocation's caller. The status is ignored: a script outside
+        # the runfiles tree still yields the repository parsed from its exec
+        # path, and one that cannot be resolved at all yields the main one.
+        __runfiles_current_repository 1 || true
+        _rf_rl_source_repo="$_rf_cr_out"
       fi
       __runfiles_debug "INFO[runfiles.sh]: rlocation($1): looking up canonical name for ($_rf_rl_target_apparent) from ($_rf_rl_source_repo) in ($RUNFILES_REPO_MAPPING)"
       __runfiles_compute_repo_prefix "$_rf_rl_source_repo"
@@ -869,22 +872,23 @@ runfiles_export_envvars() {
 
 }
 
-# Print the repository of a script that is not in the runfiles tree (the
-# sh_binary entrypoint, or a binary run directly from bazel-bin), parsed from
-# its path under the execroot: empty for the main repository. $1 is the
+# The repository of a script that is not in the runfiles tree (the sh_binary
+# entrypoint, or a binary run directly from bazel-bin), parsed from its path
+# under the execroot, into _rf_cr_out: empty for the main repository. $1 is the
 # normalized path, $2 the argument runfiles_current_repository was called
 # with, for the diagnostic.
-__runfiles_print_exec_path_repository() {
-  _rf_pr_repo="$(__runfiles_parse_exec_path_repo "$1")" || true
-  if [ -n "$_rf_pr_repo" ]; then
-    __runfiles_debug "INFO[runfiles.sh]: runfiles_current_repository($2): ($1) lies in repository ($_rf_pr_repo) (parsed exec path)"
+__runfiles_exec_path_repository() {
+  __runfiles_parse_exec_path_repo "$1" || true
+  _rf_cr_out="$_rf_pe_out"
+  _rf_cr_have=1
+  if [ -n "$_rf_cr_out" ]; then
+    __runfiles_debug "INFO[runfiles.sh]: runfiles_current_repository($2): ($1) lies in repository ($_rf_cr_out) (parsed exec path)"
   else
     __runfiles_debug "INFO[runfiles.sh]: runfiles_current_repository($2): ($1) lies in the main repository (parsed exec path)"
   fi
-  printf '%s\n' "$_rf_pr_repo"
 }
 
-# Returns the canonical name of the Bazel repository containing the calling
+# Prints the canonical name of the Bazel repository containing the calling
 # script.
 #
 # Calling convention:
@@ -899,6 +903,26 @@ __runfiles_print_exec_path_repository() {
 # Note: This function only works correctly with Bzlmod enabled. Without
 # Bzlmod, its return value is ignored if passed to rlocation.
 runfiles_current_repository() {
+  if __runfiles_current_repository "$@"; then
+    _rf_cr_status=0
+  else
+    _rf_cr_status=$?
+  fi
+  if [ -n "$_rf_cr_have" ]; then
+    printf '%s\n' "$_rf_cr_out"
+  fi
+  return $_rf_cr_status
+}
+
+# The lookup behind runfiles_current_repository, with the same arguments and
+# return status, into _rf_cr_out; _rf_cr_have is non-empty when there is a
+# result, which there is not when no caller could be resolved. Stored rather
+# than printed so that rlocation, which needs the caller's repository on every
+# lookup under bash, does not fork for it. A numeric index counts callers from
+# the function that called this one, so the wrapper passes it through as is.
+__runfiles_current_repository() {
+  _rf_cr_out=
+  _rf_cr_have=
   _rf_cr_raw=
   _rf_arg="${1:-}"
   # Non-numeric arg: caller passed a script path (POSIX calling convention).
@@ -908,11 +932,12 @@ runfiles_current_repository() {
   esac
   if [ -z "$_rf_cr_raw" ]; then
     if [ -n "${BASH_VERSION:-}" ]; then
-      # Empty arg defaults to idx=1 (bash convention, N-th caller).
+      # Empty arg defaults to idx=1 (bash convention, N-th caller); BASH_SOURCE
+      # counts from this function, one frame deeper, hence the + 1.
       # BASH_SOURCE array indexing is bash-only syntax; hide it from POSIX
       # shells via eval so parsing succeeds. `:-` guards against out-of-bounds
       # indices under `set -u`.
-      eval '_rf_cr_raw="${BASH_SOURCE[${_rf_arg:-1}]:-}"'
+      eval '_rf_cr_raw="${BASH_SOURCE[$((${_rf_arg:-1} + 1))]:-}"'
       if [ -z "$_rf_cr_raw" ]; then
         __runfiles_debug "ERROR[runfiles.sh]: runfiles_current_repository: no caller" \
           "path resolvable from BASH_SOURCE (idx=${_rf_arg:-1} out of range)"
@@ -948,12 +973,14 @@ runfiles_current_repository() {
   # If the runfiles manifest exists, search for an entry with target the
   # caller's path.
   if [ -f "${RUNFILES_MANIFEST_FILE:-/dev/null}" ]; then
-    _rf_cr_norm="$(__runfiles_normalize_backslashes "$_rf_cr_caller")"
+    __runfiles_normalize_backslashes "$_rf_cr_caller"
+    _rf_cr_norm="$_rf_nb_out"
     _rf_cr_escaped="$_rf_cr_norm"
-    _rf_cr_path="$(__runfiles_find_by_target "$_rf_cr_escaped" "$RUNFILES_MANIFEST_FILE")" || true
+    __runfiles_find_by_target "$_rf_cr_escaped" "$RUNFILES_MANIFEST_FILE" || true
+    _rf_cr_path="$_rf_ft_out"
     if [ -z "$_rf_cr_path" ]; then
       __runfiles_debug "ERROR[runfiles.sh]: runfiles_current_repository(${1:-}): ($_rf_cr_norm) is not the target of an entry in the runfiles manifest ($RUNFILES_MANIFEST_FILE)"
-      __runfiles_print_exec_path_repository "$_rf_cr_norm" "${1:-}"
+      __runfiles_exec_path_repository "$_rf_cr_norm" "${1:-}"
       return 1
     else
       __runfiles_debug "INFO[runfiles.sh]: runfiles_current_repository(${1:-}): ($_rf_cr_norm) is the target of ($_rf_cr_path) in the runfiles manifest"
@@ -963,10 +990,12 @@ runfiles_current_repository() {
   # If the runfiles directory exists, check if the caller's path is of the
   # form $RUNFILES_DIR/rlocation_path and if so, set $_rf_cr_path.
   if [ -z "$_rf_cr_path" ] && [ -d "${RUNFILES_DIR:-/dev/null}" ]; then
-    _rf_cr_norm="$(__runfiles_normalize_backslashes "$_rf_cr_caller")"
+    __runfiles_normalize_backslashes "$_rf_cr_caller"
+    _rf_cr_norm="$_rf_nb_out"
     _rf_rd="${RUNFILES_DIR%/}"
     _rf_rd="${_rf_rd%\\}"
-    _rf_cr_norm_dir="$(__runfiles_normalize_backslashes "$_rf_rd")"
+    __runfiles_normalize_backslashes "$_rf_rd"
+    _rf_cr_norm_dir="$_rf_nb_out"
     if [ -n "$_RLOCATION_CASE_INSENSITIVE" ]; then
       __runfiles_tolower "$_rf_cr_norm"
       _rf_cr_norm="$_rf_tl_out"
@@ -981,7 +1010,7 @@ runfiles_current_repository() {
     esac
     if [ -z "$_rf_cr_path" ]; then
       __runfiles_debug "INFO[runfiles.sh]: runfiles_current_repository(${1:-}): ($_rf_cr_norm) does not lie under the runfiles directory ($_rf_cr_norm_dir)"
-      __runfiles_print_exec_path_repository "$_rf_cr_norm" "${1:-}"
+      __runfiles_exec_path_repository "$_rf_cr_norm" "${1:-}"
       return 0
     else
       __runfiles_debug "INFO[runfiles.sh]: runfiles_current_repository(${1:-}): ($_rf_cr_caller) has path ($_rf_cr_path) relative to the runfiles directory ($RUNFILES_DIR)"
@@ -998,12 +1027,13 @@ runfiles_current_repository() {
   _rf_cr_path="${_rf_cr_path#_main/external/}"
   _rf_cr_path="${_rf_cr_path#_main/../}"
   _rf_cr_repo="${_rf_cr_path%%/*}"
+  _rf_cr_have=1
   if [ "$_rf_cr_repo" = "_main" ]; then
     __runfiles_debug "INFO[runfiles.sh]: runfiles_current_repository(${1:-}): ($_rf_cr_path) lies in the main repository"
-    printf '%s\n' ""
+    _rf_cr_out=
   else
     __runfiles_debug "INFO[runfiles.sh]: runfiles_current_repository(${1:-}): ($_rf_cr_path) lies in repository ($_rf_cr_repo)"
-    printf '%s\n' "$_rf_cr_repo"
+    _rf_cr_out="$_rf_cr_repo"
   fi
 }
 
@@ -1182,7 +1212,8 @@ if [ -n "${BASH_VERSION:-}" ]; then
     __runfiles_find_by_target \
     __runfiles_find_repo_mapping \
     __runfiles_parse_exec_path_repo \
-    __runfiles_print_exec_path_repository \
+    __runfiles_exec_path_repository \
+    __runfiles_current_repository \
     __runfiles_normalize_rlocation_path \
     __runfiles_resolve_manifest_target \
     rlocation \

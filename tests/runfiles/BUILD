@@ -108,6 +108,30 @@ shellcheck_test(
     }),
 )
 
+# The POSIX suite is linted as sh so that bashisms like `local` do not creep
+# in: dash and bash both accept them, so the suite itself would not notice.
+shellcheck_test(
+    name = "runfiles_test_sh_shellcheck_test",
+    data = ["runfiles_test.sh"],
+    format = "gcc",
+    severity = "warning",
+    target_compatible_with = select({
+        "@platforms//os:windows": ["@platforms//:incompatible"],
+        "//conditions:default": [],
+    }),
+)
+
+shellcheck_test(
+    name = "runfiles_test_under_bash_shellcheck_test",
+    data = ["runfiles_test_under_bash.sh"],
+    format = "gcc",
+    severity = "warning",
+    target_compatible_with = select({
+        "@platforms//os:windows": ["@platforms//:incompatible"],
+        "//conditions:default": [],
+    }),
+)
+
 # Produces the measurement table in shell/runfiles/README.md; see the script
 # for its arguments.
 sh_binary(

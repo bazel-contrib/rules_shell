@@ -1,6 +1,7 @@
 #!/bin/sh
 # shellcheck shell=sh
-# shellcheck disable=SC3043
+# The library under test is sourced from a path computed at run time.
+# shellcheck disable=SC1090
 #
 # Copyright 2018 The Bazel Authors. All rights reserved.
 #
@@ -162,7 +163,7 @@ test_rlocation_abs_path() {
 }
 
 test_init_manifest_based_runfiles() {
-  local tmpdir="$TEST_TMPDIR/test_init_manifest_based_runfiles"
+  tmpdir="$TEST_TMPDIR/test_init_manifest_based_runfiles"
   mkdir -p "$tmpdir"
   cat > "$tmpdir/foo.runfiles_manifest" << EOF
 a/b $tmpdir/c/d
@@ -239,7 +240,7 @@ EOF
 }
 
 test_manifest_based_envvars() {
-  local tmpdir="$TEST_TMPDIR/test_manifest_based_envvars"
+  tmpdir="$TEST_TMPDIR/test_manifest_based_envvars"
   mkdir -p "$tmpdir"
   echo "a b" > "$tmpdir/foo.runfiles_manifest"
 
@@ -254,7 +255,7 @@ test_manifest_based_envvars() {
 }
 
 test_init_directory_based_runfiles() {
-  local tmpdir="$TEST_TMPDIR/test_init_directory_based_runfiles"
+  tmpdir="$TEST_TMPDIR/test_init_directory_based_runfiles"
   mkdir -p "$tmpdir"
 
   export RUNFILES_DIR="${tmpdir}/mock/runfiles"
@@ -274,8 +275,25 @@ test_init_directory_based_runfiles() {
   [ "$(rlocation "c d" || echo failed)" = "failed" ] || fail
 }
 
+# Without RUNFILES_DIR and RUNFILES_MANIFEST_FILE the library derives them from
+# $0. A runfiles directory counts when it holds the library under either of
+# the names //shell/runfiles installs it as, including the legacy bazel_tools
+# one alone, which is all a tree built against Bazel's own runfiles target has.
+test_init_derives_runfiles_dir_from_legacy_location() {
+  tmpdir="$TEST_TMPDIR/test_init_derives_runfiles_dir_from_legacy_location"
+  rm -rf "$tmpdir"
+  mkdir -p "$tmpdir/bin.runfiles/bazel_tools/tools/bash/runfiles" "$tmpdir/bin.runfiles/r"
+  cp "$runfiles_lib_path" "$tmpdir/bin.runfiles/bazel_tools/tools/bash/runfiles/runfiles.bash"
+  touch "$tmpdir/bin.runfiles/r/f"
+  printf '#!/bin/sh\n. "%s"\nrlocation r/f\n' "$runfiles_lib_path" > "$tmpdir/bin"
+
+  actual=$(RUNFILES_DIR='' RUNFILES_MANIFEST_FILE='' sh "$tmpdir/bin")
+  [ "$actual" = "$tmpdir/bin.runfiles/r/f" ] \
+    || fail "expected RUNFILES_DIR to be derived from \$0.runfiles, got: $actual"
+}
+
 test_directory_based_runfiles_with_repo_mapping_from_main() {
-  local tmpdir="$TEST_TMPDIR/test_directory_based_runfiles_with_repo_mapping_from_main"
+  tmpdir="$TEST_TMPDIR/test_directory_based_runfiles_with_repo_mapping_from_main"
   mkdir -p "$tmpdir"
 
   export RUNFILES_DIR="${tmpdir}/mock/runfiles"
@@ -320,7 +338,7 @@ EOF
 }
 
 test_directory_based_runfiles_with_repo_mapping_from_other_repo() {
-  local tmpdir="$TEST_TMPDIR/test_directory_based_runfiles_with_repo_mapping_from_other_repo"
+  tmpdir="$TEST_TMPDIR/test_directory_based_runfiles_with_repo_mapping_from_other_repo"
   mkdir -p "$tmpdir"
 
   export RUNFILES_DIR="${tmpdir}/mock/runfiles"
@@ -363,7 +381,7 @@ EOF
 }
 
 test_directory_based_runfiles_with_repo_mapping_from_extension_repo() {
-  local tmpdir="$TEST_TMPDIR/test_directory_based_runfiles_with_repo_mapping_from_extension_repo"
+  tmpdir="$TEST_TMPDIR/test_directory_based_runfiles_with_repo_mapping_from_extension_repo"
   mkdir -p "$tmpdir"
 
   export RUNFILES_DIR="${tmpdir}/mock/runfiles"
@@ -402,7 +420,7 @@ EOF
 }
 
 test_manifest_based_runfiles_with_repo_mapping_from_main() {
-  local tmpdir="$TEST_TMPDIR/test_manifest_based_runfiles_with_repo_mapping_from_main"
+  tmpdir="$TEST_TMPDIR/test_manifest_based_runfiles_with_repo_mapping_from_main"
   mkdir -p "$tmpdir"
 
   cat > "$tmpdir/foo.repo_mapping" <<EOF
@@ -453,7 +471,7 @@ EOF
 }
 
 test_manifest_based_runfiles_with_repo_mapping_from_other_repo() {
-  local tmpdir="$TEST_TMPDIR/test_manifest_based_runfiles_with_repo_mapping_from_other_repo"
+  tmpdir="$TEST_TMPDIR/test_manifest_based_runfiles_with_repo_mapping_from_other_repo"
   mkdir -p "$tmpdir"
 
   cat > "$tmpdir/foo.repo_mapping" <<EOF
@@ -502,7 +520,7 @@ EOF
 }
 
 test_manifest_based_runfiles_with_repo_mapping_from_extension_repo() {
-  local tmpdir="$TEST_TMPDIR/test_manifest_based_runfiles_with_repo_mapping_from_extension_repo"
+  tmpdir="$TEST_TMPDIR/test_manifest_based_runfiles_with_repo_mapping_from_extension_repo"
   mkdir -p "$tmpdir"
 
   cat > "$tmpdir/foo.repo_mapping" <<EOF
@@ -555,7 +573,7 @@ test_directory_based_runfiles_with_repo_mapping_from_module_root_repo() {
   # __runfiles_compute_repo_prefix emulates leaves it unchanged. A wildcard
   # prefix ("rules_shell+*") would let an unrelated compact-form mapping row
   # match and rlocation return the wrong file.
-  local tmpdir="$TEST_TMPDIR/test_directory_based_runfiles_with_repo_mapping_from_module_root_repo"
+  tmpdir="$TEST_TMPDIR/test_directory_based_runfiles_with_repo_mapping_from_module_root_repo"
   mkdir -p "$tmpdir"
 
   export RUNFILES_DIR="${tmpdir}/mock/runfiles"
@@ -597,7 +615,7 @@ test_rlocation_auto_detects_source_repo_under_bash() {
     return 0
   fi
 
-  local tmpdir="$TEST_TMPDIR/test_rlocation_auto_detects_source_repo_under_bash"
+  tmpdir="$TEST_TMPDIR/test_rlocation_auto_detects_source_repo_under_bash"
   mkdir -p "$tmpdir"
 
   export RUNFILES_DIR="${tmpdir}/mock/runfiles"
@@ -627,7 +645,6 @@ HELPER
 
   export RUNFILES_MANIFEST_FILE=
 
-  local actual
   actual=$(bash "$RUNFILES_DIR/some_repo+/pkg/caller.sh")
   [ "$actual" = "$RUNFILES_DIR/realdep+/foo" ] \
     || fail "expected $RUNFILES_DIR/realdep+/foo, got: $actual"
@@ -1101,7 +1118,7 @@ test_survives_without_awk() {
   } > "$tmpdir/script.sh"
   sh_path=$(command -v sh)
 
-  actual=$(RUNFILES_DIR= RUNFILES_MANIFEST_FILE="$tmpdir/manifest" \
+  actual=$(RUNFILES_DIR='' RUNFILES_MANIFEST_FILE="$tmpdir/manifest" \
     PATH=/nonexistent "$sh_path" "$tmpdir/script.sh")
   [ "$actual" = "$tmpdir/f" ] || fail "expected $tmpdir/f without awk, got: $actual"
 }
@@ -1120,7 +1137,7 @@ test_init_snippet_aborts_when_library_fails() {
     echo 'echo reached'
   } > "$tmpdir/script.sh"
 
-  if output=$(RUNFILES_DIR="$tmpdir/broken" RUNFILES_MANIFEST_FILE= sh "$tmpdir/script.sh" 2>&1); then
+  if output=$(RUNFILES_DIR="$tmpdir/broken" RUNFILES_MANIFEST_FILE='' sh "$tmpdir/script.sh" 2>&1); then
     fail "expected the snippet to abort, got: $output"
   fi
   [ "${output#*reached}" = "$output" ] || fail "expected the script not to run past the snippet"
@@ -1165,6 +1182,7 @@ main() {
     test_init_manifest_based_runfiles
     test_manifest_based_envvars
     test_init_directory_based_runfiles
+    test_init_derives_runfiles_dir_from_legacy_location
     test_directory_based_runfiles_with_repo_mapping_from_main
     test_directory_based_runfiles_with_repo_mapping_from_other_repo
     test_directory_based_runfiles_with_repo_mapping_from_extension_repo

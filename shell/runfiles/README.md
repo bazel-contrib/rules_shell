@@ -18,16 +18,20 @@ and every script sources the library itself.
 
 ## What a lookup costs
 
-A lookup served from a runfiles directory is one `stat`, with nothing forked. A
-lookup served from a manifest has to search it. Which of the two a script gets
-is not a property of the platform: the manifest is used whenever
-`RUNFILES_MANIFEST_FILE` names an existing file. On Linux a sandboxed
-`bazel test` sees only `RUNFILES_DIR`; `bazel run`, a directly executed binary
-and everything on Windows go through the manifest.
+A lookup served from a runfiles directory is one `stat`. A lookup served from
+a manifest has to search it. Which of the two a script gets is not a property
+of the platform: the manifest is used whenever `RUNFILES_MANIFEST_FILE` names
+an existing file. On Linux a sandboxed `bazel test` sees only `RUNFILES_DIR`;
+`bazel run`, a directly executed binary and everything on Windows go through
+the manifest. Either way, when the binary has a repository mapping, the
+apparent repository name is first resolved through it, which is a search of
+that file, and under bash with a manifest one more search of the manifest finds
+the calling script's repository. Nothing else is forked: the library's helpers
+store their results in variables rather than printing them.
 
-The library searches a manifest with one `awk` process per lookup when awk
-can be found (`AWK` names the program, `awk` from `PATH` otherwise). awk reads
-the file in bulk, so the cost of a lookup does not grow with the manifest.
+The library searches with `awk` when awk can be found (`AWK` names the
+program, `awk` from `PATH` otherwise), one process per search. awk reads the
+file in bulk, so the cost of a search does not grow with the file.
 With `RULES_SHELL_RUNFILES_USE_AWK=0`, or on a host without awk, a shell
 `read` loop searches instead, at 10 to 45 µs per line: a lookup then costs in
 proportion to how far down the manifest its key sits, and a miss costs two
@@ -45,11 +49,11 @@ with bash 5.2, dash as `sh` and gawk 5.2, best of 3.
 
 | manifest | baseline | `runfiles.bash` | `runfiles.sh`, bash | `runfiles.sh`, sh | `runfiles.sh`, sh, no awk |
 |---|---|---|---|---|---|
-| 5000 lines, 5 keys spread through it | 81 ms | 21 ms | 21 ms | 14 ms | 316 ms |
-| 20000 lines, 5 keys spread through it | 84 ms | 30 ms | 29 ms | 21 ms | 1.1 s |
-| 50000 lines, 5 keys spread through it | 90 ms | 42 ms | 41 ms | 34 ms | 2.7 s |
-| 5000 lines, 1 key near the top | 22 ms | 7 ms | 7 ms | 4 ms | 2 ms |
-| runfiles directory, 1 key | 3 ms | 3 ms | 3 ms | 1 ms | 1 ms |
+| 5000 lines, 5 keys spread through it | 79 ms | 22 ms | 21 ms | 13 ms | 317 ms |
+| 20000 lines, 5 keys spread through it | 81 ms | 27 ms | 29 ms | 19 ms | 1.1 s |
+| 50000 lines, 5 keys spread through it | 87 ms | 37 ms | 37 ms | 29 ms | 2.6 s |
+| 5000 lines, 1 key near the top | 21 ms | 7 ms | 7 ms | 4 ms | 2 ms |
+| runfiles directory, 1 key | 3 ms | 3 ms | 3 ms | 2 ms | 1 ms |
 
-50 keys spread through the 50000-line manifest: 380 ms through `runfiles.bash`,
-7.4 s with the shell loops under bash.
+50 keys spread through the 50000-line manifest: 347 ms through `runfiles.bash`,
+7.2 s with the shell loops under bash.
