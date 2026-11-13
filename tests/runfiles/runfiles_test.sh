@@ -1095,7 +1095,7 @@ test_survives_without_awk() {
     "$tmpdir/lib/rules_shell/shell/runfiles/runfiles.sh" > "$tmpdir/manifest"
   {
     echo '#!/bin/sh'
-    sed -n '/^# *# --- begin runfiles.sh initialization v1 ---/,/^# *# --- end runfiles.sh initialization v1 ---/p' \
+    sed -n '/^# *# --- begin runfiles.sh initialization v4 ---/,/^# *# --- end runfiles.sh initialization v4 ---/p' \
       "$runfiles_lib_path" | sed 's/^#       //'
     echo 'rlocation r/f'
   } > "$tmpdir/script.sh"
@@ -1115,7 +1115,7 @@ test_init_snippet_aborts_when_library_fails() {
   echo 'return 1' > "$tmpdir/broken/rules_shell/shell/runfiles/runfiles.sh"
   {
     echo '#!/bin/sh'
-    sed -n '/^# *# --- begin runfiles.sh initialization v1 ---/,/^# *# --- end runfiles.sh initialization v1 ---/p' \
+    sed -n '/^# *# --- begin runfiles.sh initialization v4 ---/,/^# *# --- end runfiles.sh initialization v4 ---/p' \
       "$runfiles_lib_path" | sed 's/^#       //'
     echo 'echo reached'
   } > "$tmpdir/script.sh"

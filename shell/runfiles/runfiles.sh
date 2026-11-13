@@ -63,11 +63,12 @@
 #     to look up its own location, so insert this snippet at the top of your
 #     main script:
 #
-#       # --- begin runfiles.sh initialization v1 ---
-#       # Copy-pasted from the Bazel POSIX shell runfiles library v1.
-#       set +e; f=rules_shell/shell/runfiles/runfiles.sh; _rf_p=
+#       # --- begin runfiles.sh initialization v4 ---
+#       # Copy-pasted from the Bazel POSIX shell runfiles library v4.
+#       set -u; set +e; f=rules_shell/shell/runfiles/runfiles.sh; _rf_p=; _rf_a=
+#       if [ -n "${AWK:-}" ] || [ "${RULES_SHELL_RUNFILES_USE_AWK:-}" != 0 ]; then _rf_a=1; fi
 #       _rf_d() { [ -f "$1/$f" ] && _rf_p="$1/$f"; }
-#       _rf_m() { [ -f "$1" ] || return 1; if [ -n "${AWK:-}" ] || [ "${RULES_SHELL_RUNFILES_USE_AWK:-}" != 0 ]; then \
+#       _rf_m() { [ -f "$1" ] || return 1; if [ -n "$_rf_a" ]; then \
 #         _rf_p=$(${AWK:-awk} -v k="$f " 'index($0,k)==1{print substr($0,length(k)+1);m=1;exit}END{exit !m}' "$1" 2>/dev/null) && return; fi; \
 #         while IFS= read -r _rf_l || [ -n "$_rf_l" ]; do \
 #         case "$_rf_l" in "$f "*) _rf_p="${_rf_l#"$f "}"; return;; esac; done < "$1"; return 1; }
@@ -75,14 +76,15 @@
 #         _rf_d "$0.runfiles" || _rf_m "$0.runfiles_manifest" || _rf_m "$0.exe.runfiles_manifest" || \
 #         { echo>&2 "ERROR: cannot find $f"; exit 1; }
 #       # shellcheck disable=SC1090
-#       . "$_rf_p" || { echo>&2 "ERROR: cannot source $_rf_p"; exit 1; }; f=; unset -f _rf_d _rf_m; unset _rf_l _rf_p; set -e
-#       # --- end runfiles.sh initialization v1 ---
+#       . "$_rf_p" || { echo>&2 "ERROR: cannot source $_rf_p"; exit 1; }; f=; unset -f _rf_d _rf_m; unset _rf_l _rf_p _rf_a; set -e
+#       # --- end runfiles.sh initialization v4 ---
 #
 #     `.` on a missing file is fatal in a POSIX shell, so the snippet resolves
-#     each candidate location to an existing path before sourcing it, in the
-#     order the bash snippet tries them: `_rf_d` checks a runfiles directory,
-#     `_rf_m` searches a manifest, with awk unless RULES_SHELL_RUNFILES_USE_AWK=0
-#     and a shell loop otherwise.
+#     each candidate location to an existing path before sourcing it: `_rf_d`
+#     checks a runfiles directory, `_rf_m` searches a manifest, with awk unless
+#     RULES_SHELL_RUNFILES_USE_AWK=0 and a shell loop otherwise. It is the
+#     runfiles.bash snippet of the same version, with this file's path and
+#     without `pipefail`, which not every shell has.
 #     `rules_shell/shell/runfiles/runfiles.sh` is where the target
 #     @rules_shell//shell/runfiles installs this file, whatever the
 #     repository's canonical name is.
