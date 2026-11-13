@@ -17,8 +17,7 @@
 #
 # runfiles_test.sh carries a `#!/bin/sh` shebang, so on Debian-based Linux it
 # runs under dash and exercises the library's portable code paths. Their bash
-# counterparts -- BASH_SOURCE detection, `export -f`, and the bash key mangling
-# of the opt-in index -- are what most users get, since the default sh_toolchain
-# is bash on every platform.
+# counterparts, BASH_SOURCE detection and `export -f`, are what most users get,
+# since the default sh_toolchain is bash on every platform.
 set -eu
 exec bash "$(dirname "$0")/runfiles_test.sh"

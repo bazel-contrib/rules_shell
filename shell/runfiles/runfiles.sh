@@ -18,8 +18,8 @@
 # shell.
 #
 # This file is the implementation behind both @rules_shell//shell/runfiles
-# entry points. Sourced directly, it is the pure POSIX library. runfiles.bash,
-# next to it, sources it with awk enabled by default. The public API is
+# entry points. Sourced directly, it is the POSIX library; runfiles.bash, next
+# to it, is the bash entry point and sources it. The public API is
 # rlocation, runfiles_export_envvars, runfiles_current_repository and
 # runfiles_rlocation_checked. Under bash the caller's repository is detected
 # from BASH_SOURCE and the functions are exported with `export -f`. Under any
@@ -27,8 +27,7 @@
 # its argument, rlocation without a second argument assumes the main
 # repository, and every script has to source the library itself.
 #
-# README.md in this directory covers what a lookup costs, the opt-in manifest
-# index, and measurements.
+# README.md in this directory covers what a lookup costs, with measurements.
 #
 # ENVIRONMENT
 #
@@ -40,14 +39,11 @@
 #   Bazel or by a parent's runfiles_export_envvars; derived from $0 when
 #   neither is set. The manifest is used whenever it names an existing file.
 # - RUNFILES_LIB_DEBUG=1: print a diagnostic to stderr for every lookup.
-# - AWK: search manifests with this awk program, one process per lookup,
-#   instead of shell loops. Expanded unquoted, so `busybox awk` works. A
+# - AWK: the awk program that searches manifests, one process per lookup;
+#   `awk` from PATH by default. Expanded unquoted, so `busybox awk` works. A
 #   program that cannot be found leaves the shell loops in place.
-# - RULES_SHELL_RUNFILES_USE_AWK=1: the same, with `awk` from PATH.
-#   RULES_SHELL_RUNFILES_USE_AWK=0: keep the shell loops even when sourced
-#   through runfiles.bash. Neither has an effect when AWK is set.
-# - RULES_SHELL_RUNFILES_CACHE=1: parse the manifest once, at source time, into
-#   an in-memory index instead of scanning it per lookup. See README.md.
+# - RULES_SHELL_RUNFILES_USE_AWK=0: search manifests with shell loops rather
+#   than awk, so that nothing is forked. Has no effect when AWK is set.
 #
 # Exported for child processes: RUNFILES_DIR, RUNFILES_MANIFEST_FILE and
 # JAVA_RUNFILES (by runfiles_export_envvars), and RUNFILES_REPO_MAPPING, the
@@ -71,7 +67,7 @@
 #       # Copy-pasted from the Bazel POSIX shell runfiles library v1.
 #       set +e; f=rules_shell/shell/runfiles/runfiles.sh; _rf_p=
 #       _rf_d() { [ -f "$1/$f" ] && _rf_p="$1/$f"; }
-#       _rf_m() { [ -f "$1" ] || return 1; if [ -n "${AWK:-}" ] || [ "${RULES_SHELL_RUNFILES_USE_AWK:-}" = 1 ]; then \
+#       _rf_m() { [ -f "$1" ] || return 1; if [ -n "${AWK:-}" ] || [ "${RULES_SHELL_RUNFILES_USE_AWK:-}" != 0 ]; then \
 #         _rf_p=$(${AWK:-awk} -v k="$f " 'index($0,k)==1{print substr($0,length(k)+1);m=1;exit}END{exit !m}' "$1" 2>/dev/null) && return; fi; \
 #         while IFS= read -r _rf_l || [ -n "$_rf_l" ]; do \
 #         case "$_rf_l" in "$f "*) _rf_p="${_rf_l#"$f "}"; return;; esac; done < "$1"; return 1; }
@@ -85,8 +81,8 @@
 #     `.` on a missing file is fatal in a POSIX shell, so the snippet resolves
 #     each candidate location to an existing path before sourcing it, in the
 #     order the bash snippet tries them: `_rf_d` checks a runfiles directory,
-#     `_rf_m` searches a manifest, with awk when AWK or
-#     RULES_SHELL_RUNFILES_USE_AWK=1 says so and a shell loop otherwise.
+#     `_rf_m` searches a manifest, with awk unless RULES_SHELL_RUNFILES_USE_AWK=0
+#     and a shell loop otherwise.
 #     `rules_shell/shell/runfiles/runfiles.sh` is where the target
 #     @rules_shell//shell/runfiles installs this file, whatever the
 #     repository's canonical name is.
@@ -301,145 +297,63 @@ __runfiles_compute_repo_prefix() {
   _rf_cp_out="${_rf_cp_head}*${_rf_cp_suffix}"
 }
 
-# --- Manifest index ---
-#
-# With RULES_SHELL_RUNFILES_CACHE=1, sourcing this library parses the manifest
-# once into a set of variables named `_rf_ci<generation>_<mangled key>`, read
-# and written through `eval`, and a lookup becomes O(1) in the manifest's size.
-# README.md explains the design; the invariants the code below relies on are:
-#   - Only the sourcing shell builds the index. A lookup runs in a `$(...)`
-#     subshell, which inherits variables but cannot hand anything back.
-#   - Values reach `eval` as a variable *reference*, never as text, so nothing
-#     a manifest contains is evaluated as shell source.
-#   - Escaped entries (keys with a space or newline) and keys the mangling
-#     cannot represent are left out, and such lookups scan. Neither can be a
-#     path prefix of an indexed key, since the mangling accepts a key only if
-#     every prefix of it is acceptable too, which is what lets
-#     __runfiles_find_prefix walk a path's prefixes through the index without
-#     missing a longer match.
-
-# Configuration, exported alongside _RLOCATION_CASE_INSENSITIVE so that a
-# script which inherits the library's functions through `export -f` rather than
-# sourcing it still sees the same settings. The index itself is never exported:
-# it would have to be copied into the environment of every process the script
-# starts, and a process that inherits the functions can parse its own.
-_RULES_SHELL_RUNFILES_INDEX_OK=    # source-time caching is possible and wanted
-_RULES_SHELL_RUNFILES_INDEX_FOLD=  # the mangling can fold case cheaply
-
-# Mutable state, never exported. Every read below tolerates it being unset, so
-# that a process which inherits only the functions starts without believing in
-# an index that its parent holds.
-_rf_ix_file=       # manifest the current index was built from, empty if none
-_rf_ix_ci=         # _RLOCATION_CASE_INSENSITIVE that index was built under
-_rf_ix_pfx=        # variable-name prefix of the current index
-_rf_ix_gen=${_rf_ix_gen:-0}  # bumped per build, so replacing an index is O(1)
-                   # rather than a walk that unsets every variable of the old
-                   # one. Carried over when the library is sourced twice in one
-                   # shell, so that the second index cannot read the first's
-                   # variables back.
-_rf_rc_memo_key=   # inputs the memoized caller repository was resolved from
-_rf_rc_memo_val=   # that caller's repository (see rlocation)
-
-# RULES_SHELL_RUNFILES_CACHE=1 turns the source-time work on, for a script that
-# resolves enough paths to amortize a parse.
-case "${RULES_SHELL_RUNFILES_CACHE:-}" in
-  1) _RULES_SHELL_RUNFILES_INDEX_OK=1 ;;
-esac
-
-# RULES_SHELL_RUNFILES_PORTABLE_INDEX forces the pure-POSIX key mangling and
-# case folding even under bash, so that the test suite covers both variants on
-# one host.
-#
-# Case folding decides whether an index is possible at all on a
-# case-insensitive platform: every key has to be lowercased on the way in, and
-# without bash's ${var,,} that is a character-at-a-time loop over the whole
-# manifest, which costs more than the index wins back. macOS still ships bash
-# 3.2, which has no ${var,,}; Windows, the only case-insensitive platform,
-# resolves its sh_toolchain to MSYS2 bash 5.
-_rf_ix_bash=
-if [ -n "${BASH_VERSION:-}" ] && [ -z "${RULES_SHELL_RUNFILES_PORTABLE_INDEX:-}" ]; then
-  _rf_ix_bash=1
-  case "$BASH_VERSION" in
-    [0-3].*) ;;
-    *) _RULES_SHELL_RUNFILES_INDEX_FOLD=1 ;;
-  esac
-fi
-export _RULES_SHELL_RUNFILES_INDEX_OK
-export _RULES_SHELL_RUNFILES_INDEX_FOLD
+# --- Manifest search ---
 
 # Convert ASCII uppercase to lowercase, into _rf_tl_out. Stored rather than
 # printed so that no caller forks for it: the case-insensitive manifest scans
 # call it once per line.
-#
-# Return 0 iff the first ${#2} characters of $1, lowercased, equal $2, which
-# must already be lowercase: a prefix test that does not fold the whole line.
-#
-# Under bash 4 and later, which is what Windows, the one case-insensitive
-# platform, runs, ${var,,} folds a string in one builtin operation. The
-# portable variants loop over the characters; folding a string of length N
-# costs O(N^2) in most shells, since every append copies the output, which is
-# why the prefix test exists as its own loop that stops at the first mismatch.
-if [ -n "$_RULES_SHELL_RUNFILES_INDEX_FOLD" ]; then
-  # ${var:offset:length} is bash 3 syntax and ${var,,} bash 4; both stay
-  # inside `eval` so that no other shell has to parse them.
-  eval '__runfiles_tolower() { _rf_tl_out="${1,,}"; }'
-  eval '__runfiles_line_starts_with_ci() {
-    _rf_lsw_head="${1:0:${#2}}"
-    [ "${_rf_lsw_head,,}" = "$2" ]
-  }'
-else
-  __runfiles_tolower() {
-    _rf_tl_in="$1"
-    _rf_tl_out=""
-    while [ -n "$_rf_tl_in" ]; do
-      _rf_tl_c="${_rf_tl_in%"${_rf_tl_in#?}"}"
-      _rf_tl_in="${_rf_tl_in#?}"
-      case "$_rf_tl_c" in
-        A) _rf_tl_c=a;; B) _rf_tl_c=b;; C) _rf_tl_c=c;; D) _rf_tl_c=d;;
-        E) _rf_tl_c=e;; F) _rf_tl_c=f;; G) _rf_tl_c=g;; H) _rf_tl_c=h;;
-        I) _rf_tl_c=i;; J) _rf_tl_c=j;; K) _rf_tl_c=k;; L) _rf_tl_c=l;;
-        M) _rf_tl_c=m;; N) _rf_tl_c=n;; O) _rf_tl_c=o;; P) _rf_tl_c=p;;
-        Q) _rf_tl_c=q;; R) _rf_tl_c=r;; S) _rf_tl_c=s;; T) _rf_tl_c=t;;
-        U) _rf_tl_c=u;; V) _rf_tl_c=v;; W) _rf_tl_c=w;; X) _rf_tl_c=x;;
-        Y) _rf_tl_c=y;; Z) _rf_tl_c=z;;
-      esac
-      _rf_tl_out="${_rf_tl_out}${_rf_tl_c}"
-    done
-  }
-  __runfiles_line_starts_with_ci() {
-    _rf_lsw_line="$1"
-    _rf_lsw_lpfx="$2"
-    while [ -n "$_rf_lsw_lpfx" ]; do
-      [ -z "$_rf_lsw_line" ] && return 1
-      _rf_lsw_pc="${_rf_lsw_lpfx%"${_rf_lsw_lpfx#?}"}"
-      _rf_lsw_lpfx="${_rf_lsw_lpfx#?}"
-      _rf_lsw_lc="${_rf_lsw_line%"${_rf_lsw_line#?}"}"
-      _rf_lsw_line="${_rf_lsw_line#?}"
-      case "$_rf_lsw_lc" in
-        A) _rf_lsw_lc=a;; B) _rf_lsw_lc=b;; C) _rf_lsw_lc=c;; D) _rf_lsw_lc=d;;
-        E) _rf_lsw_lc=e;; F) _rf_lsw_lc=f;; G) _rf_lsw_lc=g;; H) _rf_lsw_lc=h;;
-        I) _rf_lsw_lc=i;; J) _rf_lsw_lc=j;; K) _rf_lsw_lc=k;; L) _rf_lsw_lc=l;;
-        M) _rf_lsw_lc=m;; N) _rf_lsw_lc=n;; O) _rf_lsw_lc=o;; P) _rf_lsw_lc=p;;
-        Q) _rf_lsw_lc=q;; R) _rf_lsw_lc=r;; S) _rf_lsw_lc=s;; T) _rf_lsw_lc=t;;
-        U) _rf_lsw_lc=u;; V) _rf_lsw_lc=v;; W) _rf_lsw_lc=w;; X) _rf_lsw_lc=x;;
-        Y) _rf_lsw_lc=y;; Z) _rf_lsw_lc=z;;
-      esac
-      [ "$_rf_lsw_lc" != "$_rf_lsw_pc" ] && return 1
-    done
-    return 0
-  }
-fi
+__runfiles_tolower() {
+  _rf_tl_in="$1"
+  _rf_tl_out=""
+  while [ -n "$_rf_tl_in" ]; do
+    _rf_tl_c="${_rf_tl_in%"${_rf_tl_in#?}"}"
+    _rf_tl_in="${_rf_tl_in#?}"
+    case "$_rf_tl_c" in
+      A) _rf_tl_c=a;; B) _rf_tl_c=b;; C) _rf_tl_c=c;; D) _rf_tl_c=d;;
+      E) _rf_tl_c=e;; F) _rf_tl_c=f;; G) _rf_tl_c=g;; H) _rf_tl_c=h;;
+      I) _rf_tl_c=i;; J) _rf_tl_c=j;; K) _rf_tl_c=k;; L) _rf_tl_c=l;;
+      M) _rf_tl_c=m;; N) _rf_tl_c=n;; O) _rf_tl_c=o;; P) _rf_tl_c=p;;
+      Q) _rf_tl_c=q;; R) _rf_tl_c=r;; S) _rf_tl_c=s;; T) _rf_tl_c=t;;
+      U) _rf_tl_c=u;; V) _rf_tl_c=v;; W) _rf_tl_c=w;; X) _rf_tl_c=x;;
+      Y) _rf_tl_c=y;; Z) _rf_tl_c=z;;
+    esac
+    _rf_tl_out="${_rf_tl_out}${_rf_tl_c}"
+  done
+}
 
-# A set AWK, or RULES_SHELL_RUNFILES_USE_AWK=1, searches manifests with awk
-# rather than a shell `read` loop: a fork per lookup, but one that reads the
-# file in bulk, so the cost stops growing with the manifest. Sourced through
-# runfiles.bash, which sets _rf_bash_wrapped, awk is on unless
-# RULES_SHELL_RUNFILES_USE_AWK=0. AWK names the program, `awk` on PATH
-# otherwise, and is expanded unquoted where it runs. The index, when built, is
-# still consulted first.
+# Return 0 iff the first ${#2} characters of $1, lowercased, equal $2, which
+# must already be lowercase: a prefix test that stops at the first mismatch
+# rather than folding the whole line.
+__runfiles_line_starts_with_ci() {
+  _rf_lsw_line="$1"
+  _rf_lsw_lpfx="$2"
+  while [ -n "$_rf_lsw_lpfx" ]; do
+    [ -z "$_rf_lsw_line" ] && return 1
+    _rf_lsw_pc="${_rf_lsw_lpfx%"${_rf_lsw_lpfx#?}"}"
+    _rf_lsw_lpfx="${_rf_lsw_lpfx#?}"
+    _rf_lsw_lc="${_rf_lsw_line%"${_rf_lsw_line#?}"}"
+    _rf_lsw_line="${_rf_lsw_line#?}"
+    case "$_rf_lsw_lc" in
+      A) _rf_lsw_lc=a;; B) _rf_lsw_lc=b;; C) _rf_lsw_lc=c;; D) _rf_lsw_lc=d;;
+      E) _rf_lsw_lc=e;; F) _rf_lsw_lc=f;; G) _rf_lsw_lc=g;; H) _rf_lsw_lc=h;;
+      I) _rf_lsw_lc=i;; J) _rf_lsw_lc=j;; K) _rf_lsw_lc=k;; L) _rf_lsw_lc=l;;
+      M) _rf_lsw_lc=m;; N) _rf_lsw_lc=n;; O) _rf_lsw_lc=o;; P) _rf_lsw_lc=p;;
+      Q) _rf_lsw_lc=q;; R) _rf_lsw_lc=r;; S) _rf_lsw_lc=s;; T) _rf_lsw_lc=t;;
+      U) _rf_lsw_lc=u;; V) _rf_lsw_lc=v;; W) _rf_lsw_lc=w;; X) _rf_lsw_lc=x;;
+      Y) _rf_lsw_lc=y;; Z) _rf_lsw_lc=z;;
+    esac
+    [ "$_rf_lsw_lc" != "$_rf_lsw_pc" ] && return 1
+  done
+  return 0
+}
+
+# Manifests are searched with awk rather than a shell `read` loop whenever awk
+# can be found: a fork per lookup, but one that reads the file in bulk, so the
+# cost stops growing with the manifest. AWK names the program, `awk` on PATH
+# otherwise, and is expanded unquoted where it runs.
+# RULES_SHELL_RUNFILES_USE_AWK=0 keeps the shell loops, which fork nothing.
 _RULES_SHELL_RUNFILES_AWK=
-if [ -n "${AWK:-}" ] || [ "${RULES_SHELL_RUNFILES_USE_AWK:-}" = 1 ] ||
-  { [ -n "${_rf_bash_wrapped:-}" ] && [ "${RULES_SHELL_RUNFILES_USE_AWK:-}" != 0 ]; }; then
+if [ -n "${AWK:-}" ] || [ "${RULES_SHELL_RUNFILES_USE_AWK:-}" != 0 ]; then
   _RULES_SHELL_RUNFILES_AWK="${AWK:-awk}"
   if ! command -v "${_RULES_SHELL_RUNFILES_AWK%% *}" >/dev/null 2>&1; then
     __runfiles_debug "WARNING[runfiles.sh]: '$_RULES_SHELL_RUNFILES_AWK' cannot be found; searching manifests with shell loops"
@@ -461,127 +375,6 @@ __runfiles_awk() {
   LC_ALL=C $_RULES_SHELL_RUNFILES_AWK "$@"
 }
 
-# Mangle the manifest key $1 into the tail of an index variable name, in
-# _rf_ck. Returns 1 for a key that cannot be represented, whose lookups then
-# fall back to scanning.
-#
-# The mapping stays injective by escaping `_` first: every literal `_` becomes
-# `_u` before `/`, `.`, `-` and `+` introduce `_s`, `_d`, `_m` and `_p`.
-# Without that, `a/b`, `a.b` and `a_b` would collide on a single entry.
-#
-# The accepted characters are spelled out rather than written as ranges: bash
-# before 5.0 collates bracket ranges by locale, so under a UTF-8 locale [A-Z]
-# can match an accented letter, which would then reach `eval` as part of a
-# variable name and fail the assignment.
-#
-# _RLOCATION_CASE_INSENSITIVE is read per call rather than baked in at source
-# time, because the rest of the library reads it per call too and tests set it
-# after sourcing to exercise the Windows path on a Unix host.
-if [ -n "$_rf_ix_bash" ]; then
-  # bash substitutes one character class per builtin operation; the portable
-  # variant below costs three to five times as much on a 10k-line manifest.
-  # Case folding goes through __runfiles_tolower: one operation on bash 4, a
-  # loop on bash 3, which __runfiles_index_ready keeps away from
-  # case-insensitive lookups anyway.
-  # shellcheck disable=SC3060  # guarded by the BASH_VERSION test above
-  __runfiles_cache_key() {
-    case "$1" in *[!ABCDEFGHIJKLMNOPQRSTUVWXYZabcdefghijklmnopqrstuvwxyz0123456789_/.+-]*) return 1 ;; esac
-    if [ -n "$_RLOCATION_CASE_INSENSITIVE" ]; then
-      __runfiles_tolower "$1"
-      _rf_ck="$_rf_tl_out"
-    else
-      _rf_ck="$1"
-    fi
-    _rf_ck="${_rf_ck//_/_u}"
-    _rf_ck="${_rf_ck//\//_s}"
-    _rf_ck="${_rf_ck//./_d}"
-    _rf_ck="${_rf_ck//-/_m}"
-    _rf_ck="${_rf_ck//+/_p}"
-  }
-else
-  # The loop advances to the next character needing escaping rather than
-  # walking the key one character at a time: a runfiles path has a handful of
-  # separators among dozens of ordinary characters, and __runfiles_gsub would
-  # have to make a full pass per character class.
-  __runfiles_cache_key() {
-    case "$1" in *[!ABCDEFGHIJKLMNOPQRSTUVWXYZabcdefghijklmnopqrstuvwxyz0123456789_/.+-]*) return 1 ;; esac
-    _rf_ck_in="$1"
-    _rf_ck=
-    while :; do
-      case "$_rf_ck_in" in
-        *[_/.+-]*)
-          _rf_ck_head="${_rf_ck_in%%[_/.+-]*}"
-          _rf_ck_in="${_rf_ck_in#"$_rf_ck_head"}"
-          _rf_ck_c="${_rf_ck_in%"${_rf_ck_in#?}"}"
-          _rf_ck_in="${_rf_ck_in#?}"
-          case $_rf_ck_c in
-            _) _rf_ck_c=_u ;;
-            /) _rf_ck_c=_s ;;
-            .) _rf_ck_c=_d ;;
-            -) _rf_ck_c=_m ;;
-            +) _rf_ck_c=_p ;;
-          esac
-          _rf_ck="${_rf_ck}${_rf_ck_head}${_rf_ck_c}"
-          ;;
-        *)
-          _rf_ck="${_rf_ck}${_rf_ck_in}"
-          break
-          ;;
-      esac
-    done
-  }
-fi
-
-# Parse the manifest $1 into a fresh index, replacing any index already built.
-# Leaves the library without an index, so that every lookup scans, when $1 is
-# not a file, when caching is off, or when keys would have to be folded on a
-# shell that cannot fold them cheaply.
-__runfiles_index_build() {
-  _rf_ix_file=
-  [ -n "${_RULES_SHELL_RUNFILES_INDEX_OK:-}" ] || return 0
-  [ -f "${1:-/dev/null}" ] || return 0
-  if [ -n "$_RLOCATION_CASE_INSENSITIVE" ] && [ -z "${_RULES_SHELL_RUNFILES_INDEX_FOLD:-}" ]; then
-    return 0
-  fi
-  _rf_ix_gen=$((${_rf_ix_gen:-0} + 1))
-  _rf_ix_pfx="_rf_ci${_rf_ix_gen}_"
-  __runfiles_debug "INFO[runfiles.sh]: indexing runfiles manifest ($1)"
-  while IFS= read -r _rf_ib_line || [ -n "$_rf_ib_line" ]; do
-    _rf_ib_key="${_rf_ib_line%% *}"
-    # Rejects blank lines and escaped entries, which begin with a space.
-    [ -n "$_rf_ib_key" ] || continue
-    case "$_rf_ib_line" in *" "*) ;; *) continue ;; esac
-    _rf_ib_val="${_rf_ib_line#* }"
-    __runfiles_cache_key "$_rf_ib_key" || continue
-    # An entry with an empty value is stored as a lone newline rather than
-    # skipped, so that it still claims its key: a later duplicate with a value
-    # must not take over what the scan, stopping at the first entry, reports as
-    # empty. A manifest value is a path on a single line, so a lone newline is
-    # never one.
-    [ -n "$_rf_ib_val" ] || _rf_ib_val="$_RULES_SHELL_RUNFILES_NL"
-    # ${name=value} assigns only when name is unset, so the first entry for a
-    # key wins, as it does in a scan.
-    eval ": \"\${${_rf_ix_pfx}${_rf_ck}=\$_rf_ib_val}\""
-  done < "$1"
-  _rf_ix_file="$1"
-  _rf_ix_ci="$_RLOCATION_CASE_INSENSITIVE"
-}
-
-# Return 0 if lookups against the manifest $1 can be served from the index.
-#
-# An index is never built from here: a lookup usually runs in a command
-# substitution's subshell, so it would be rebuilt per lookup and cost more than
-# scanning. A script that points RUNFILES_MANIFEST_FILE at another manifest
-# after sourcing therefore goes back to scanning, and can call
-# __runfiles_index_build itself to index the new one, as
-# runfiles_export_envvars does for the manifest it promotes.
-__runfiles_index_ready() {
-  [ -n "${_rf_ix_file:-}" ] && [ "$1" = "$_rf_ix_file" ] || return 1
-  # Keys are folded on the way into the index, so an index is only usable in
-  # the case-sensitivity mode it was built under.
-  [ "$_RLOCATION_CASE_INSENSITIVE" = "${_rf_ix_ci:-}" ]
-}
-
 # Find the first line in $2 whose key is exactly $1 and store the value
 # (everything after the key and the separating space) in _rf_fl_val.
 # $1 must already be in manifest (escaped) form.
@@ -592,17 +385,6 @@ __runfiles_index_ready() {
 # subshell per lookup.
 __runfiles_find_line() {
   _rf_fl_val=
-
-  # An escaped search key starts with a space, so __runfiles_cache_key rejects
-  # it and the lookup drops through to the scan, which is where escaped entries
-  # live.
-  if __runfiles_index_ready "$2" && __runfiles_cache_key "$1"; then
-    eval "_rf_fl_val=\"\${${_rf_ix_pfx}${_rf_ck}-}\""
-    [ -n "$_rf_fl_val" ] || return 1
-    # A listed entry whose value is empty, which the scan reports the same way.
-    [ "$_rf_fl_val" = "$_RULES_SHELL_RUNFILES_NL" ] && _rf_fl_val=
-    return 0
-  fi
 
   if [ -n "${_RULES_SHELL_RUNFILES_AWK:-}" ]; then
     __runfiles_find_line_awk "$1" "$2"
@@ -682,15 +464,6 @@ __runfiles_find_prefix() {
   _rf_fp_suffix=
   _rf_fp_key=
 
-  # The index holds exactly the unescaped entries, which is the set the scan
-  # considers when $4 is empty. Requiring $1 itself to be indexable is what
-  # makes the walk complete: every prefix of an indexable key is itself
-  # indexable, so no prefix can be hiding in the manifest unindexed.
-  if [ -z "$_rf_fp_want_esc" ] && __runfiles_index_ready "$2" &&
-    __runfiles_cache_key "$_rf_fp_path"; then
-    __runfiles_find_prefix_indexed
-    return
-  fi
   if [ -n "${_RULES_SHELL_RUNFILES_AWK:-}" ]; then
     __runfiles_find_prefix_awk "$2" || return 1
   else
@@ -720,27 +493,6 @@ __runfiles_find_prefix() {
     _rf_fp_suffix="$_rf_gs_out"
   fi
   return 0
-}
-
-# The index walk behind __runfiles_find_prefix. Walking the prefixes
-# longest-first yields the longest matching key by construction, which is what
-# the scan computes the hard way, and the suffix falls out of the walk.
-__runfiles_find_prefix_indexed() {
-  _rf_fp_t="${_rf_fp_path%/*}"
-  while :; do
-    __runfiles_cache_key "$_rf_fp_t" || return 1
-    eval "_rf_fp_val=\"\${${_rf_ix_pfx}${_rf_ck}-}\""
-    # An entry with an empty value is treated as absent, as it is in the scan:
-    # it does not stop the walk.
-    if [ -n "$_rf_fp_val" ] && [ "$_rf_fp_val" != "$_RULES_SHELL_RUNFILES_NL" ]; then
-      _rf_fp_suffix="${_rf_fp_path#"$_rf_fp_t"}"
-      return 0
-    fi
-    case "$_rf_fp_t" in
-      */*) _rf_fp_t="${_rf_fp_t%/*}" ;;
-      *) return 1 ;;
-    esac
-  done
 }
 
 # The awk search behind __runfiles_find_prefix: one pass applies the same rules
@@ -1039,28 +791,10 @@ rlocation() {
         source_repo="$2"
       elif [ -n "${BASH_VERSION:-}" ]; then
         # Idx 2 walks past runfiles_current_repository and rlocation to the
-        # actual caller; BASH_SOURCE[1] here is that same frame, one call
-        # closer.
-        #
-        # The answer depends only on the caller's script and on where the
-        # runfiles live, and resolving it costs a command substitution plus,
-        # with a manifest, a search on entry values that the index cannot
-        # serve. __runfiles_memo_caller_repository may therefore have resolved
-        # it already. The memo is only read here, never written: rlocation
-        # prints its answer, so it runs in a `$(...)` subshell whose variables
-        # die with it.
-        local _rf_rc_key
-        eval '_rf_rc_key="${BASH_SOURCE[1]:-}"'
-        _rf_rc_key="$_rf_rc_key|${RUNFILES_MANIFEST_FILE:-}|${RUNFILES_DIR:-}|${PWD:-}"
-        if [ "${RUNFILES_LIB_DEBUG:-}" != 1 ] &&
-          [ "$_rf_rc_key" = "${_rf_rc_memo_key:-}" ]; then
-          source_repo="$_rf_rc_memo_val"
-        else
-          # `|| true` preserves whatever repo name the parse-exec-path fallback
-          # already printed to stdout, mirroring bash's `local -r x=$(...)`
-          # where `local` masks the subshell's exit code.
-          source_repo="$(runfiles_current_repository 2 || true)"
-        fi
+        # actual caller. `|| true` preserves whatever repo name the
+        # parse-exec-path fallback already printed to stdout, mirroring bash's
+        # `local -r x=$(...)`, where `local` masks the subshell's exit code.
+        source_repo="$(runfiles_current_repository 2 || true)"
       fi
       __runfiles_debug "INFO[runfiles.sh]: rlocation($1): looking up canonical name for ($target_repo_apparent_name) from ($source_repo) in ($RUNFILES_REPO_MAPPING)"
       local source_repo_prefix
@@ -1130,37 +864,6 @@ runfiles_export_envvars() {
     esac
   fi
 
-  # Lookups may now go through a manifest that was not in use when the library
-  # was sourced (on Linux a `bazel test` starts with only RUNFILES_DIR set and
-  # the MANIFEST inside it is promoted above), so bring the index and the
-  # memoized caller repository up to date. Both are no-ops unless
-  # RULES_SHELL_RUNFILES_CACHE=1, and like sourcing, they only take effect in
-  # the shell that runs this function.
-  __runfiles_index_ready "${RUNFILES_MANIFEST_FILE:-}" || __runfiles_index_build "${RUNFILES_MANIFEST_FILE:-}"
-  if [ -n "${BASH_VERSION:-}" ]; then
-    eval '__runfiles_memo_caller_repository "${BASH_SOURCE[1]:-}"'
-  fi
-}
-
-# Resolve the repository of the script at $1 once, for rlocation to reuse
-# instead of resolving it on every call. Only the shell that sourced this file
-# can fill the memo, since rlocation runs in `$(...)` and anything it stored
-# would die with the subshell, so this runs at source time and again from
-# runfiles_export_envvars, which changes the inputs the answer depends on. Does
-# nothing, and clears the memo, unless the index is on, the shell is bash and
-# there is a repo mapping for rlocation to consult.
-__runfiles_memo_caller_repository() {
-  if [ -z "${_RULES_SHELL_RUNFILES_INDEX_OK:-}" ] || [ -z "${BASH_VERSION:-}" ] ||
-    [ "${RUNFILES_LIB_DEBUG:-}" = 1 ] || ! [ -f "${RUNFILES_REPO_MAPPING:-}" ] ||
-    [ -z "${1:-}" ]; then
-    _rf_rc_memo_key=
-    _rf_rc_memo_val=
-    return 0
-  fi
-  _rf_mc_key="$1|${RUNFILES_MANIFEST_FILE:-}|${RUNFILES_DIR:-}|${PWD:-}"
-  [ "$_rf_mc_key" = "${_rf_rc_memo_key:-}" ] && return 0
-  _rf_rc_memo_val="$(runfiles_current_repository "$1" || true)"
-  _rf_rc_memo_key="$_rf_mc_key"
 }
 
 # Print the repository of a script that is not in the runfiles tree (the
@@ -1409,9 +1112,8 @@ runfiles_rlocation_checked() {
         ;;
     esac
 
-    # Look for $1 itself first: the overwhelmingly common case, served by the
-    # index when there is one, else by awk or by a scan that rejects a line
-    # with a single `case`.
+    # Look for $1 itself first: the overwhelmingly common case, served by awk
+    # or by a scan that rejects a line with a single `case`.
     #
     # An entry with an empty value counts as absent, hence the test on
     # _rf_fl_val rather than on the exit status.
@@ -1472,19 +1174,14 @@ if [ -n "${BASH_VERSION:-}" ]; then
     __runfiles_gsub \
     __runfiles_awk \
     __runfiles_compute_repo_prefix \
-    __runfiles_cache_key \
-    __runfiles_index_build \
-    __runfiles_index_ready \
     __runfiles_find_line \
     __runfiles_find_line_awk \
     __runfiles_find_line_scan \
     __runfiles_find_prefix \
-    __runfiles_find_prefix_indexed \
     __runfiles_find_prefix_awk \
     __runfiles_find_prefix_scan \
     __runfiles_find_by_target \
     __runfiles_find_repo_mapping \
-    __runfiles_memo_caller_repository \
     __runfiles_parse_exec_path_repo \
     __runfiles_print_exec_path_repository \
     __runfiles_normalize_rlocation_path \
@@ -1499,32 +1196,6 @@ if [ -n "${BASH_VERSION:-}" ]; then
   unset _rf_fn
 fi
 
-# --- Source-time caching ---
-#
-# Everything below runs in the shell that sourced this file, the only shell
-# whose variables every later `$(rlocation ...)` subshell inherits, so it is
-# done once for the whole script; the index needs RULES_SHELL_RUNFILES_CACHE=1.
-
-# Parse the manifest into an index if asked to, so that lookups do not scan it.
-# This also makes the _repo_mapping lookup below a constant-time one.
-__runfiles_index_build "${RUNFILES_MANIFEST_FILE:-}"
-
 # The repo mapping manifest may not exist with old versions of Bazel.
 RUNFILES_REPO_MAPPING=$(runfiles_rlocation_checked _repo_mapping || echo "")
 export RUNFILES_REPO_MAPPING
-
-# With the index on, resolve the sourcing script's repository once and prime
-# rlocation's memo with it. At the top level of a sourced file that script is
-# BASH_SOURCE[1], or BASH_SOURCE[2] when this file is sourced through
-# runfiles.bash, which sets _rf_bash_wrapped. Either is the frame rlocation
-# later reads as its own BASH_SOURCE[1], which is what makes the key match.
-_rf_src_caller=
-if [ -n "${BASH_VERSION:-}" ]; then
-  if [ -n "${_rf_bash_wrapped:-}" ]; then
-    eval '_rf_src_caller="${BASH_SOURCE[2]:-}"'
-  else
-    eval '_rf_src_caller="${BASH_SOURCE[1]:-}"'
-  fi
-fi
-__runfiles_memo_caller_repository "$_rf_src_caller"
-_rf_src_caller=

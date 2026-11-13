@@ -57,18 +57,6 @@ is_windows() {
   [ -n "${SYSTEMROOT:-}" ] || [ -n "${COMSPEC:-}" ]
 }
 
-# Assert that sourcing the library indexed the manifest $1, where an index is
-# possible at all: a case-insensitive platform whose shell cannot fold case
-# cheaply gets none, and scans instead. Call after sourcing.
-assert_indexed() {
-  if [ -n "${_RULES_SHELL_RUNFILES_INDEX_OK:-}" ] &&
-    { [ -z "${_RLOCATION_CASE_INSENSITIVE:-}" ] || [ -n "${_RULES_SHELL_RUNFILES_INDEX_FOLD:-}" ]; }; then
-    [ "${_rf_ix_file:-}" = "$1" ] || fail "sourcing the library did not index $1"
-  else
-    [ -z "${_rf_ix_file:-}" ] || fail "indexed $1 where no index is possible"
-  fi
-}
-
 find_runfiles_lib() {
   if type rlocation >/dev/null 2>&1; then
     unset -f rlocation
@@ -889,267 +877,11 @@ EOF
     || fail "case-insensitive matching must still respect path boundaries"
 }
 
-# With RULES_SHELL_RUNFILES_CACHE=1, sourcing the library parses the manifest
-# into an in-memory index. The manifest tests above run without it and cover
-# the scan; the tests below cover the index: that it is built, that it answers
-# the same as the scan it replaces, and that the entries it cannot hold still
-# resolve. Keys are mangled into shell variable names, so paths differing only
-# in a separator must not collide, and lookups run in a command substitution,
-# so the index has to survive into a subshell.
-test_manifest_index_is_built_and_keyed_injectively() {
-  tmpdir="$TEST_TMPDIR/test_manifest_index_is_built_and_keyed_injectively"
-  export RULES_SHELL_RUNFILES_CACHE=1
-  rm -rf "$tmpdir"
-  mkdir -p "$tmpdir"
-  # Every pair of these differs only in characters the mangling rewrites.
-  for n in slash dot dash under plus; do touch "$tmpdir/$n"; done
-  cat > "$tmpdir/manifest" <<EOF
-r/a/b $tmpdir/slash
-r/a.b $tmpdir/dot
-r/a-b $tmpdir/dash
-r/a_b $tmpdir/under
-r/a+b $tmpdir/plus
-EOF
-
-  export RUNFILES_DIR=
-  export RUNFILES_MANIFEST_FILE="$tmpdir/manifest"
-  . "$runfiles_lib_path"
-
-  assert_indexed "$tmpdir/manifest"
-
-  for n in slash dot dash under plus; do
-    case $n in
-      slash) key="r/a/b" ;;
-      dot)   key="r/a.b" ;;
-      dash)  key="r/a-b" ;;
-      under) key="r/a_b" ;;
-      plus)  key="r/a+b" ;;
-    esac
-    [ "$(rlocation "$key")" = "$tmpdir/$n" ] \
-      || fail "expected $key to resolve to $tmpdir/$n, got: $(rlocation "$key")"
-  done
-}
-
-# The index holds the first entry for a key, the way the bash library's
-# `grep -m1` does, and reports an entry with no value the way a scan does:
-# absent for a direct lookup, and not the end of the prefix walk.
-test_manifest_index_matches_scan_semantics() {
-  tmpdir="$TEST_TMPDIR/test_manifest_index_matches_scan_semantics"
-  export RULES_SHELL_RUNFILES_CACHE=1
-  rm -rf "$tmpdir"
-  mkdir -p "$tmpdir/dir" "$tmpdir/other/empty"
-  touch "$tmpdir/first" "$tmpdir/second" "$tmpdir/dir/file" "$tmpdir/other/empty/x"
-  # Written with printf rather than a heredoc to keep the trailing space on the
-  # empty-valued entries, which is how Bazel lists an empty file. `s` is not
-  # listed, so nothing shadows the empty entry below it.
-  {
-    printf 'r %s\n' "$tmpdir/other"
-    printf 'r/dup %s\n' "$tmpdir/first"
-    printf 'r/dup %s\n' "$tmpdir/second"
-    printf 'r/empty \n'
-    printf 'r/empty/nested %s\n' "$tmpdir/dir"
-    printf 's/empty \n'
-  } > "$tmpdir/manifest"
-
-  export RUNFILES_DIR=
-  export RUNFILES_MANIFEST_FILE="$tmpdir/manifest"
-  . "$runfiles_lib_path"
-  assert_indexed "$tmpdir/manifest"
-
-  [ "$(rlocation r/dup)" = "$tmpdir/first" ] \
-    || fail "expected the first entry for a duplicated key to win"
-  [ -z "$(rlocation s/empty)" ] \
-    || fail "expected an entry with an empty value to count as absent"
-  # An empty value does not end the walk, so r/empty/x resolves through the
-  # shorter `r` prefix.
-  [ "$(rlocation r/empty/x)" = "$tmpdir/other/empty/x" ] \
-    || fail "expected the walk to pass the empty entry, got: $(rlocation r/empty/x)"
-  [ "$(rlocation r/empty/nested/file)" = "$tmpdir/dir/file" ] \
-    || fail "expected a longer prefix to still win over the empty one"
-}
-
-# Entries the index cannot hold, escaped ones and keys with a character the
-# mangling has no encoding for, have to keep resolving through the scan.
-test_manifest_index_falls_back_to_scanning() {
-  tmpdir="$TEST_TMPDIR/test_manifest_index_falls_back_to_scanning"
-  export RULES_SHELL_RUNFILES_CACHE=1
-  rm -rf "$tmpdir"
-  mkdir -p "$tmpdir"
-  touch "$tmpdir/spaced" "$tmpdir/comma" "$tmpdir/tilde"
-  cat > "$tmpdir/manifest" <<EOF
- r/with\sspace $tmpdir/spaced
-r/with,comma $tmpdir/comma
-r/with~tilde $tmpdir/tilde
-EOF
-
-  export RUNFILES_DIR=
-  export RUNFILES_MANIFEST_FILE="$tmpdir/manifest"
-  . "$runfiles_lib_path"
-  assert_indexed "$tmpdir/manifest"
-
-  [ "$(rlocation "r/with space")" = "$tmpdir/spaced" ] \
-    || fail "expected an escaped entry to resolve through the scan"
-  [ "$(rlocation "r/with,comma")" = "$tmpdir/comma" ] \
-    || fail "expected a comma in a key to resolve through the scan"
-  [ "$(rlocation "r/with~tilde")" = "$tmpdir/tilde" ] \
-    || fail "expected a tilde in a key to resolve through the scan"
-}
-
-# An index is only valid for the manifest and the case-sensitivity mode it was
-# built from. Changing either after sourcing must fall back to scanning rather
-# than answer from a stale index.
-test_manifest_index_is_bypassed_when_stale() {
-  tmpdir="$TEST_TMPDIR/test_manifest_index_is_bypassed_when_stale"
-  export RULES_SHELL_RUNFILES_CACHE=1
-  rm -rf "$tmpdir"
-  mkdir -p "$tmpdir"
-  touch "$tmpdir/one" "$tmpdir/two"
-  echo "r/f $tmpdir/one" > "$tmpdir/manifest"
-  echo "r/f $tmpdir/two" > "$tmpdir/manifest2"
-
-  export RUNFILES_DIR=
-  export RUNFILES_MANIFEST_FILE="$tmpdir/manifest"
-  . "$runfiles_lib_path"
-
-  export RUNFILES_MANIFEST_FILE="$tmpdir/manifest2"
-  [ "$(rlocation r/f)" = "$tmpdir/two" ] \
-    || fail "a manifest set after sourcing must not be answered from the index"
-
-  # Sourcing again in the same shell indexes the new manifest, which means it
-  # must not read the previous index's variables back.
-  . "$runfiles_lib_path"
-  [ "$(rlocation r/f)" = "$tmpdir/two" ] \
-    || fail "re-sourcing must index the current manifest, got: $(rlocation r/f)"
-
-  export _RLOCATION_CASE_INSENSITIVE=1
-  export RUNFILES_MANIFEST_FILE="$tmpdir/manifest"
-  [ "$(rlocation r/f)" = "$tmpdir/one" ] \
-    || fail "a case-sensitivity change must not be answered from the index"
-}
-
-# The case-insensitive index is unreachable on a Unix host without building it
-# explicitly, since the mode is decided at source time.
-test_manifest_index_case_insensitive() {
-  tmpdir="$TEST_TMPDIR/test_manifest_index_case_insensitive"
-  export RULES_SHELL_RUNFILES_CACHE=1
-  rm -rf "$tmpdir"
-  mkdir -p "$tmpdir/dir"
-  touch "$tmpdir/f" "$tmpdir/dir/file"
-  cat > "$tmpdir/manifest" <<EOF
-A/B/File.TXT $tmpdir/f
-C/Dir $tmpdir/dir
-EOF
-
-  export RUNFILES_DIR=
-  export RUNFILES_MANIFEST_FILE="$tmpdir/manifest"
-  . "$runfiles_lib_path"
-  export _RLOCATION_CASE_INSENSITIVE=1
-  __runfiles_index_build "$RUNFILES_MANIFEST_FILE"
-
-  assert_indexed "$tmpdir/manifest"
-
-  [ "$(rlocation a/b/file.txt)" = "$tmpdir/f" ] \
-    || fail "expected a case-insensitive exact match"
-  [ "$(rlocation A/B/File.TXT)" = "$tmpdir/f" ] \
-    || fail "expected the exact-case lookup to keep working"
-  [ "$(rlocation c/dir/file)" = "$tmpdir/dir/file" ] \
-    || fail "expected a case-insensitive prefix match"
-  [ -z "$(rlocation c/dirx/file)" ] \
-    || fail "case-insensitive matching must still respect path boundaries"
-}
-
-# A key holding a character the mangling cannot represent is left out of the
-# index and resolves through the scan. Non-ASCII characters are the case that
-# matters: bash before 5.0 collates bracket ranges by locale, so a guard written
-# as [A-Za-z] would let such a key through and fail inside `eval`.
-test_manifest_index_skips_non_ascii_keys() {
-  tmpdir="$TEST_TMPDIR/test_manifest_index_skips_non_ascii_keys"
-  export RULES_SHELL_RUNFILES_CACHE=1
-  rm -rf "$tmpdir"
-  mkdir -p "$tmpdir/dir"
-  touch "$tmpdir/f" "$tmpdir/dir/file"
-  # U+00E9, written as UTF-8 bytes so that this file stays ASCII.
-  key="$(printf 'r/caf\303\251.txt')"
-  dirkey="$(printf 'r/caf\303\251')"
-  {
-    printf '%s %s\n' "$key" "$tmpdir/f"
-    printf '%s %s\n' "$dirkey" "$tmpdir/dir"
-  } > "$tmpdir/manifest"
-
-  export RUNFILES_DIR=
-  export RUNFILES_MANIFEST_FILE="$tmpdir/manifest"
-  LC_ALL=en_US.UTF-8 . "$runfiles_lib_path"
-  assert_indexed "$tmpdir/manifest"
-
-  [ "$(rlocation "$key")" = "$tmpdir/f" ] \
-    || fail "expected a non-ASCII key to resolve through the scan, got: $(rlocation "$key")"
-  [ "$(rlocation "$dirkey/file")" = "$tmpdir/dir/file" ] \
-    || fail "expected a non-ASCII prefix to resolve through the scan, got: $(rlocation "$dirkey/file")"
-}
-
-# On Linux a `bazel test` starts with only RUNFILES_DIR set, and
-# runfiles_export_envvars promotes the MANIFEST inside it to
-# RUNFILES_MANIFEST_FILE, after which every lookup goes through that manifest.
-# With the index on, the function has to index it, or every lookup after it
-# would silently degrade to a scan.
-test_export_envvars_indexes_promoted_manifest() {
-  tmpdir="$TEST_TMPDIR/test_export_envvars_indexes_promoted_manifest"
-  export RULES_SHELL_RUNFILES_CACHE=1
-  rm -rf "$tmpdir"
-  mkdir -p "$tmpdir/foo.runfiles/r" "$tmpdir/original"
-  touch "$tmpdir/foo.runfiles/r/f" "$tmpdir/original/f"
-  echo "r/f $tmpdir/original/f" > "$tmpdir/foo.runfiles/MANIFEST"
-
-  export RUNFILES_DIR="$tmpdir/foo.runfiles"
-  export RUNFILES_MANIFEST_FILE=
-  . "$runfiles_lib_path"
-  [ -z "${_rf_ix_file:-}" ] || fail "nothing to index while only RUNFILES_DIR is set"
-  [ "$(rlocation r/f)" = "$RUNFILES_DIR/r/f" ] || fail "expected a directory lookup"
-
-  runfiles_export_envvars
-  [ "${RUNFILES_MANIFEST_FILE:-}" = "$RUNFILES_DIR/MANIFEST" ] \
-    || fail "expected the MANIFEST to be promoted, got '${RUNFILES_MANIFEST_FILE:-}'"
-  assert_indexed "$RUNFILES_DIR/MANIFEST"
-  [ "$(rlocation r/f)" = "$tmpdir/original/f" ] \
-    || fail "expected a lookup through the promoted manifest, got: $(rlocation r/f)"
-
-  # Calling it again with nothing changed must keep the index rather than
-  # rebuild it.
-  _before="${_rf_ix_pfx:-}"
-  runfiles_export_envvars
-  [ "${_rf_ix_pfx:-}" = "$_before" ] || fail "expected the index to be kept"
-}
-
-# Without RULES_SHELL_RUNFILES_CACHE=1 nothing is indexed, and every lookup
-# works by scanning.
-test_manifest_index_off_by_default() {
-  tmpdir="$TEST_TMPDIR/test_manifest_index_off_by_default"
-  rm -rf "$tmpdir"
-  mkdir -p "$tmpdir/dir"
-  touch "$tmpdir/f" "$tmpdir/dir/file"
-  cat > "$tmpdir/manifest" <<EOF
-r/f $tmpdir/f
-r/d $tmpdir/dir
-EOF
-
-  export RUNFILES_DIR=
-  export RUNFILES_MANIFEST_FILE="$tmpdir/manifest"
-  . "$runfiles_lib_path"
-
-  [ -z "${_rf_ix_file:-}" ] \
-    || fail "the manifest must not be indexed by default"
-  [ "$(rlocation r/f)" = "$tmpdir/f" ] \
-    || fail "expected an exact match without an index"
-  [ "$(rlocation r/d/file)" = "$tmpdir/dir/file" ] \
-    || fail "expected a prefix match without an index"
-  [ -z "$(rlocation r/nope)" ] || fail "expected a miss without an index"
-}
-
-# A set AWK, or RULES_SHELL_RUNFILES_USE_AWK=1, searches manifests with awk;
-# `runfiles_sh_awk_test` runs this whole suite that way. The tests below cover
-# the switch itself: either variable enables awk, AWK names the program, and one
-# that cannot be found leaves the shell loops in place rather than breaking
-# every lookup.
+# Manifests are searched with awk when it can be found, and with shell loops
+# under RULES_SHELL_RUNFILES_USE_AWK=0, which is how `runfiles_sh_no_awk_test`
+# runs this whole suite. The tests below cover the switch itself: awk is on by
+# default, AWK names the program, and one that cannot be found leaves the shell
+# loops in place rather than breaking every lookup.
 write_awk_test_manifest() {
   rm -rf "$1"
   mkdir -p "$1/dir"
@@ -1162,16 +894,15 @@ EOF
   export RUNFILES_MANIFEST_FILE="$1/manifest"
 }
 
-test_awk_enabled_by_switch() {
+test_awk_on_by_default() {
   if ! command -v awk >/dev/null 2>&1; then
     log_info "no awk on PATH, skipping"
     return 0
   fi
-  tmpdir="$TEST_TMPDIR/test_awk_enabled_by_switch"
+  tmpdir="$TEST_TMPDIR/test_awk_on_by_default"
   write_awk_test_manifest "$tmpdir"
 
-  unset AWK
-  export RULES_SHELL_RUNFILES_USE_AWK=1
+  unset AWK RULES_SHELL_RUNFILES_USE_AWK
   . "$runfiles_lib_path"
 
   [ "${_RULES_SHELL_RUNFILES_AWK:-}" = awk ] \
@@ -1180,6 +911,22 @@ test_awk_enabled_by_switch() {
   [ "$(rlocation r/d/file)" = "$tmpdir/dir/file" ] \
     || fail "expected a prefix match through awk"
   [ -z "$(rlocation r/nope)" ] || fail "expected a miss through awk"
+}
+
+test_awk_disabled_by_env() {
+  tmpdir="$TEST_TMPDIR/test_awk_disabled_by_env"
+  write_awk_test_manifest "$tmpdir"
+
+  unset AWK
+  export RULES_SHELL_RUNFILES_USE_AWK=0
+  . "$runfiles_lib_path"
+
+  [ -z "${_RULES_SHELL_RUNFILES_AWK:-}" ] \
+    || fail "expected RULES_SHELL_RUNFILES_USE_AWK=0 to keep the shell loops"
+  [ "$(rlocation r/f)" = "$tmpdir/f" ] || fail "expected an exact match without awk"
+  [ "$(rlocation r/d/file)" = "$tmpdir/dir/file" ] \
+    || fail "expected a prefix match without awk"
+  [ -z "$(rlocation r/nope)" ] || fail "expected a miss without awk"
 }
 
 test_awk_enabled_by_program() {
@@ -1336,9 +1083,8 @@ test_directory_based_relative_symlink_targets() {
 }
 
 # The documented initialization snippet, taken from the library's own header,
-# and the library have to work on a host without awk even when awk is asked
-# for: the snippet's awk attempt fails and its shell loop takes over, and the
-# library keeps its shell loops.
+# and the library have to work on a host without awk: the snippet's awk attempt
+# fails and its shell loop takes over, and the library keeps its shell loops.
 test_survives_without_awk() {
   tmpdir="$TEST_TMPDIR/test_survives_without_awk"
   rm -rf "$tmpdir"
@@ -1355,7 +1101,7 @@ test_survives_without_awk() {
   } > "$tmpdir/script.sh"
   sh_path=$(command -v sh)
 
-  actual=$(RUNFILES_DIR= RUNFILES_MANIFEST_FILE="$tmpdir/manifest" RULES_SHELL_RUNFILES_USE_AWK=1 \
+  actual=$(RUNFILES_DIR= RUNFILES_MANIFEST_FILE="$tmpdir/manifest" \
     PATH=/nonexistent "$sh_path" "$tmpdir/script.sh")
   [ "$actual" = "$tmpdir/f" ] || fail "expected $tmpdir/f without awk, got: $actual"
 }
@@ -1410,15 +1156,8 @@ main() {
     test_manifest_lookup_case_insensitive
     test_manifest_based_relative_symlink_targets
     test_directory_based_relative_symlink_targets
-    test_manifest_index_is_built_and_keyed_injectively
-    test_manifest_index_matches_scan_semantics
-    test_manifest_index_falls_back_to_scanning
-    test_manifest_index_is_bypassed_when_stale
-    test_manifest_index_case_insensitive
-    test_manifest_index_skips_non_ascii_keys
-    test_export_envvars_indexes_promoted_manifest
-    test_manifest_index_off_by_default
-    test_awk_enabled_by_switch
+    test_awk_on_by_default
+    test_awk_disabled_by_env
     test_awk_enabled_by_program
     test_awk_falls_back_when_program_is_missing
     test_survives_without_awk

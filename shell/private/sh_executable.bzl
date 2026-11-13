@@ -26,13 +26,10 @@ _RUNFILES_INIT_PATH = "bazel_tools/tools/bash/runfiles/runfiles.bash"
 
 # The launcher for `use_bash_launcher = True`: the v4 initialization snippet of
 # runfiles.bash, after which the runfiles variables and functions are exported
-# and the script exec'd. RULES_SHELL_RUNFILES_CACHE is hidden while the library
-# is sourced: the launcher resolves one path, and an index would never survive
-# the exec.
+# and the script exec'd.
 _LAUNCHER_TEMPLATE = """\
 {shebang}
 
-_rf_c="${{RULES_SHELL_RUNFILES_CACHE:-}}"; RULES_SHELL_RUNFILES_CACHE=
 # --- begin runfiles.bash initialization v4 ---
 set -uo pipefail; set +e; f={init_path}; _rf_p=; _rf_a=
 if [ -n "${{AWK:-}}" ] || [ "${{RULES_SHELL_RUNFILES_USE_AWK:-}}" != 0 ]; then _rf_a=1; fi
@@ -47,7 +44,6 @@ _rf_d "${{RUNFILES_DIR:-/dev/null}}" || _rf_m "${{RUNFILES_MANIFEST_FILE:-/dev/n
 # shellcheck disable=SC1090
 source "$_rf_p" || {{ echo>&2 "ERROR: cannot source $_rf_p"; exit 1; }}; f=; unset -f _rf_d _rf_m; unset _rf_l _rf_p _rf_a; set -e
 # --- end runfiles.bash initialization v4 ---
-RULES_SHELL_RUNFILES_CACHE="$_rf_c"; unset _rf_c
 
 runfiles_export_envvars
 

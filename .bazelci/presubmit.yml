@@ -76,11 +76,11 @@ tasks:
       - "--config=posix_shell"
     build_targets:
       - "//tests/runfiles:runfiles_sh_test"
-      - "//tests/runfiles:runfiles_sh_awk_test"
+      - "//tests/runfiles:runfiles_sh_no_awk_test"
     test_flags:
       - "--config=posix_shell"
       # Fail rather than pass under bash if /bin/sh on the CI image ever changes.
       - "--test_env=RUNFILES_TEST_REQUIRE_POSIX_SH=1"
     test_targets:
       - "//tests/runfiles:runfiles_sh_test"
-      - "//tests/runfiles:runfiles_sh_awk_test"
+      - "//tests/runfiles:runfiles_sh_no_awk_test"

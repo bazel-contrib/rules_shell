@@ -11,8 +11,8 @@ sh_test(
     deps = ["//shell/runfiles"],
 )
 
-# The same, with the wrapper's awk default switched off, so that the shell loops
-# are what the bash suite exercises through the legacy path.
+# The same with awk switched off, so that the shell loops are what the bash
+# suite exercises through the legacy path.
 sh_test(
     name = "runfiles_bash_no_awk_test",
     srcs = ["runfiles_test.bash"],
@@ -43,34 +43,22 @@ sh_test(
     data = ["//shell/runfiles:runfiles_sh"],
     # The suite runs under whatever `#!/bin/sh` resolves to: dash on Debian and
     # Ubuntu, bash elsewhere. The `test_posix_shell_runfiles` presubmit task
-    # guarantees dash coverage by setting RUNFILES_TEST_REQUIRE_POSIX_SH.
-    #
-    # Running under bash selects the bash-specific key mangling and case
-    # folding, which `runfiles_sh_under_bash_test` covers on Linux. macOS
-    # forces the portable variants so that they are exercised somewhere.
-    # Windows must not: it is the one case-insensitive platform, where the
-    # library only indexes if the shell can fold case cheaply, so forcing the
-    # portable variants there would disable indexing rather than cover it.
-    env = select({
-        "@platforms//os:macos": {
-            "RUNFILES_LIBRARY_FILE": "$(rlocationpath //shell/runfiles:runfiles_sh)",
-            "RULES_SHELL_RUNFILES_PORTABLE_INDEX": "1",
-        },
-        "//conditions:default": {
-            "RUNFILES_LIBRARY_FILE": "$(rlocationpath //shell/runfiles:runfiles_sh)",
-        },
-    }),
+    # guarantees dash coverage by setting RUNFILES_TEST_REQUIRE_POSIX_SH, and
+    # `runfiles_sh_under_bash_test` covers bash on Linux.
+    env = {
+        "RUNFILES_LIBRARY_FILE": "$(rlocationpath //shell/runfiles:runfiles_sh)",
+    },
     deps = ["//shell/runfiles:runfiles_sh"],
 )
 
 sh_test(
-    name = "runfiles_sh_awk_test",
+    name = "runfiles_sh_no_awk_test",
     srcs = ["runfiles_test.sh"],
     data = ["//shell/runfiles:runfiles_sh"],
-    # The same suite with manifests searched by awk instead of shell loops.
+    # The same suite with manifests searched by shell loops instead of awk.
     env = {
         "RUNFILES_LIBRARY_FILE": "$(rlocationpath //shell/runfiles:runfiles_sh)",
-        "RULES_SHELL_RUNFILES_USE_AWK": "1",
+        "RULES_SHELL_RUNFILES_USE_AWK": "0",
     },
     deps = ["//shell/runfiles:runfiles_sh"],
 )

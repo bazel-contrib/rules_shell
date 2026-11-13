@@ -721,10 +721,10 @@ function test_directory_based_envvars() {
   [[ -z "${RUNFILES_MANIFEST_FILE:-}" ]] || fail
 }
 
-# runfiles.bash is a wrapper around runfiles.sh that enables awk unless the
-# caller has decided: AWK wins if set, RULES_SHELL_RUNFILES_USE_AWK=0 keeps the
-# shell loops. The wrapper must not touch AWK or leave temporaries behind.
-# Only meaningful when the library under test is reached through the wrapper.
+# Through the wrapper, awk is on unless the caller has decided: AWK wins if
+# set, RULES_SHELL_RUNFILES_USE_AWK=0 keeps the shell loops. The wrapper must
+# not touch AWK or leave temporaries behind. Only meaningful when the library
+# under test is reached through the wrapper.
 function test_runfiles_bash_awk_default() {
   if [[ "$_RUNFILES_LIBRARY_FILE" != *runfiles.bash ]]; then
     return 0
@@ -737,13 +737,13 @@ function test_runfiles_bash_awk_default() {
     source "$runfiles_lib_path" || fail
     if command -v awk >&/dev/null; then
       [[ "${_RULES_SHELL_RUNFILES_AWK:-}" == awk ]] \
-        || fail "expected the wrapper to enable awk, got '${_RULES_SHELL_RUNFILES_AWK:-}'"
+        || fail "expected awk by default, got '${_RULES_SHELL_RUNFILES_AWK:-}'"
     else
       [[ -z "${_RULES_SHELL_RUNFILES_AWK:-}" ]] \
         || fail "expected the shell loops without awk on PATH"
     fi
     [[ -z "${AWK+x}" ]] || fail "the wrapper leaked AWK='${AWK}' into the environment"
-    [[ -z "${_rf_bash_wrapped+x}" && -z "${_rf_bash_dir+x}" ]] \
+    [[ -z "${_rf_bash_dir+x}" ]] \
       || fail "the wrapper leaked its temporaries into the environment"
   ) || fail
 
@@ -784,34 +784,6 @@ function test_runfiles_bash_exports_public_api() {
   done
   bash -c '[[ -n "${RUNFILES_REPO_MAPPING+x}" ]]' \
     || fail "expected RUNFILES_REPO_MAPPING to be exported"
-}
-
-# With the index on, sourcing the library resolves the sourcing script's
-# repository once, keyed by the frame rlocation later sees as its caller. That
-# has to hold both when runfiles.sh is sourced directly and when it is sourced
-# through runfiles.bash, which adds a frame in between.
-function test_caller_repository_memo_keyed_to_sourcing_script() {
-  local tmpdir="$(mktemp -d $TEST_TMPDIR/tmp.XXXXXXXX)"
-
-  export RULES_SHELL_RUNFILES_CACHE=1
-  export RUNFILES_DIR="${tmpdir}/mock/runfiles"
-  export RUNFILES_MANIFEST_FILE=
-  mkdir -p "$RUNFILES_DIR"
-  echo ",my_module,_main" > "$RUNFILES_DIR/_repo_mapping"
-  source "$runfiles_lib_path"
-
-  [[ "${_rf_rc_memo_key:-}" == "${BASH_SOURCE[0]}|"* ]] \
-    || fail "expected the memo to be keyed to ${BASH_SOURCE[0]}, got '${_rf_rc_memo_key:-}'"
-
-  # runfiles_export_envvars changes the inputs the memo depends on, so it has to
-  # re-key it.
-  mkdir -p "$RUNFILES_DIR/_main"
-  touch "$RUNFILES_DIR/_main/f"
-  echo "_main/f $RUNFILES_DIR/_main/f" > "$RUNFILES_DIR/MANIFEST"
-  runfiles_export_envvars
-  [[ "${_rf_rc_memo_key:-}" == "${BASH_SOURCE[0]}|$RUNFILES_DIR/MANIFEST|"* ]] \
-    || fail "expected runfiles_export_envvars to re-key the memo, got '${_rf_rc_memo_key:-}'"
-  [[ "$(rlocation my_module/f "" || echo failed)" == "$RUNFILES_DIR/_main/f" ]] || fail
 }
 
 # The v4 snippet, taken from the wrapper's own header, and the wrapper have to

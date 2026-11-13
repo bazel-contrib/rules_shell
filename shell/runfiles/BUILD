@@ -6,10 +6,9 @@ load("//shell/private:root_symlinks.bzl", "ROOT_SYMLINKS_SUPPORTED", "root_symli
 #
 # - bazel_tools/tools/bash/runfiles/runfiles.bash, the path the bash
 #   initialization snippets and the launcher source. It is a thin wrapper
-#   that sources runfiles.sh with awk enabled by default.
+#   that sources runfiles.sh.
 # - rules_shell/shell/runfiles/runfiles.sh, the path the POSIX initialization
-#   snippet (v1) sources, which gets the pure POSIX behavior: shell builtins
-#   only.
+#   snippet (v1) sources, for scripts that run under any POSIX shell.
 #
 # Both are root symlinks, which need the `skip_conflict_checking` parameter
 # added in Bazel 7.4.0. Where the native shell rules still exist (Bazel 7) the

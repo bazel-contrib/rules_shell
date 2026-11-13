@@ -15,8 +15,7 @@
 # Runfiles lookup library for Bazel-built Bash binaries and tests, version 4.
 #
 # This file is the bash entry point to the runfiles library. The implementation
-# is runfiles.sh, next to this file, which this file sources with awk enabled
-# unless AWK is set or RULES_SHELL_RUNFILES_USE_AWK=0; README.md in this
+# is runfiles.sh, next to this file, which this file sources; README.md in this
 # directory describes both.
 #
 # VERSION HISTORY:
@@ -66,7 +65,7 @@
 # ENVIRONMENT:
 # - If RUNFILES_LIB_DEBUG=1 is set, the script will print diagnostic messages to
 #   stderr.
-# - AWK and RULES_SHELL_RUNFILES_USE_AWK, see above.
+# - AWK and RULES_SHELL_RUNFILES_USE_AWK, see runfiles.sh.
 #
 # USAGE:
 # 1.  Depend on this runfiles library from your build rule:
@@ -125,12 +124,7 @@ if [[ ! -f "$_rf_bash_dir/runfiles.sh" ]]; then
   return 1
 fi
 
-# Tells runfiles.sh that it is being sourced through this file: it then enables
-# awk unless RULES_SHELL_RUNFILES_USE_AWK=0, and looks one frame further up
-# BASH_SOURCE for the script that sourced it.
-_rf_bash_wrapped=1
-
 # shellcheck disable=SC1091
 source "$_rf_bash_dir/runfiles.sh"
 
-unset _rf_bash_dir _rf_bash_wrapped
+unset _rf_bash_dir
