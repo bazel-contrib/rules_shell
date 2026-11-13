@@ -1126,6 +1126,33 @@ test_init_snippet_aborts_when_library_fails() {
   [ "${output#*reached}" = "$output" ] || fail "expected the script not to run past the snippet"
 }
 
+# awk takes an operand of the form name=value as an assignment, so a manifest
+# path shaped like that has to reach it some other way, in the library and in
+# the snippet alike.
+test_manifest_path_with_equals_sign() {
+  tmpdir="$TEST_TMPDIR/test_manifest_path_with_equals_sign"
+  rm -rf "$tmpdir"
+  mkdir -p "$tmpdir/lib/rules_shell/shell/runfiles"
+  cp "$runfiles_lib_path" "$tmpdir/lib/rules_shell/shell/runfiles/runfiles.sh"
+  touch "$tmpdir/f"
+  printf 'r/f %s\nrules_shell/shell/runfiles/runfiles.sh %s\n' "$tmpdir/f" \
+    "$tmpdir/lib/rules_shell/shell/runfiles/runfiles.sh" > "$tmpdir/out=1.manifest"
+
+  export RUNFILES_DIR=
+  export RUNFILES_MANIFEST_FILE="$tmpdir/out=1.manifest"
+  . "$runfiles_lib_path"
+  [ "$(rlocation r/f)" = "$tmpdir/f" ] || fail "expected a lookup through out=1.manifest, got: $(rlocation r/f)"
+
+  {
+    echo '#!/bin/sh'
+    sed -n '/^# *# --- begin runfiles.sh initialization v4 ---/,/^# *# --- end runfiles.sh initialization v4 ---/p' \
+      "$runfiles_lib_path" | sed 's/^#       //'
+    echo 'rlocation r/f'
+  } > "$tmpdir/script.sh"
+  actual=$(sh "$tmpdir/script.sh")
+  [ "$actual" = "$tmpdir/f" ] || fail "expected the snippet to find the library through out=1.manifest, got: $actual"
+}
+
 main() {
   manifest_file="${RUNFILES_MANIFEST_FILE:-}"
   dir="${RUNFILES_DIR:-}"
@@ -1162,6 +1189,7 @@ main() {
     test_awk_falls_back_when_program_is_missing
     test_survives_without_awk
     test_init_snippet_aborts_when_library_fails
+    test_manifest_path_with_equals_sign
   "
   failure=0
   for t in $tests; do

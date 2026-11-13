@@ -88,7 +88,7 @@
 #       if [ -n "${AWK:-}" ] || [ "${RULES_SHELL_RUNFILES_USE_AWK:-}" != 0 ]; then _rf_a=1; fi
 #       _rf_d() { [ -f "$1/$f" ] && _rf_p="$1/$f"; }
 #       _rf_m() { [ -f "$1" ] || return 1; if [ -n "$_rf_a" ]; then \
-#         _rf_p=$(${AWK:-awk} -v k="$f " 'index($0,k)==1{print substr($0,length(k)+1);m=1;exit}END{exit !m}' "$1" 2>/dev/null) && return; fi; \
+#         _rf_p=$(${AWK:-awk} -v k="$f " 'index($0,k)==1{print substr($0,length(k)+1);m=1;exit}END{exit !m}' < "$1" 2>/dev/null); case $? in 0) return;; 1) return 1;; esac; fi; \
 #         while IFS= read -r _rf_l || [ -n "$_rf_l" ]; do \
 #         case "$_rf_l" in "$f "*) _rf_p="${_rf_l#"$f "}"; return;; esac; done < "$1"; return 1; }
 #       _rf_d "${RUNFILES_DIR:-/dev/null}" || _rf_m "${RUNFILES_MANIFEST_FILE:-/dev/null}" || \

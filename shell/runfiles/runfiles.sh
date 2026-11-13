@@ -1,5 +1,4 @@
 # shellcheck shell=sh
-# shellcheck disable=SC3043
 # Copyright 2026 The Bazel Authors. All rights reserved.
 #
 # Licensed under the Apache License, Version 2.0 (the "License");
@@ -69,7 +68,7 @@
 #       if [ -n "${AWK:-}" ] || [ "${RULES_SHELL_RUNFILES_USE_AWK:-}" != 0 ]; then _rf_a=1; fi
 #       _rf_d() { [ -f "$1/$f" ] && _rf_p="$1/$f"; }
 #       _rf_m() { [ -f "$1" ] || return 1; if [ -n "$_rf_a" ]; then \
-#         _rf_p=$(${AWK:-awk} -v k="$f " 'index($0,k)==1{print substr($0,length(k)+1);m=1;exit}END{exit !m}' "$1" 2>/dev/null) && return; fi; \
+#         _rf_p=$(${AWK:-awk} -v k="$f " 'index($0,k)==1{print substr($0,length(k)+1);m=1;exit}END{exit !m}' < "$1" 2>/dev/null); case $? in 0) return;; 1) return 1;; esac; fi; \
 #         while IFS= read -r _rf_l || [ -n "$_rf_l" ]; do \
 #         case "$_rf_l" in "$f "*) _rf_p="${_rf_l#"$f "}"; return;; esac; done < "$1"; return 1; }
 #       _rf_d "${RUNFILES_DIR:-/dev/null}" || _rf_m "${RUNFILES_MANIFEST_FILE:-/dev/null}" || \
@@ -364,17 +363,21 @@ if [ -n "${AWK:-}" ] || [ "${RULES_SHELL_RUNFILES_USE_AWK:-}" != 0 ]; then
 fi
 export _RULES_SHELL_RUNFILES_AWK
 
-# Run the configured awk program: $1 is the program, $2 the file to search and
-# every further argument a parameter, which the program reads from ARGV[2],
-# ARGV[3], ... in its BEGIN block and blanks, so that awk does not open it as a
-# file. Parameters travel as arguments rather than through `-v`, which would
-# process the backslashes of an escaped key.
+# Run the awk program $1 over the file $2. Every further argument is a
+# parameter, which the program reads from ARGV[1], ARGV[2], ... in its BEGIN
+# block and blanks, so that awk reads the file from stdin instead. The file is
+# redirected rather than passed as an operand because awk takes an operand of
+# the form name=value as an assignment. Parameters travel as arguments rather
+# than through `-v`, which would process the backslashes of an escaped key.
 #
 # awk runs in the C locale: a path is a byte string, gawk warns on stderr about
 # bytes that are not valid in a UTF-8 locale, and ASCII-only case folding is
 # what the shell loops do too.
 __runfiles_awk() {
-  LC_ALL=C $_RULES_SHELL_RUNFILES_AWK "$@"
+  _rf_aw_prog="$1"
+  _rf_aw_file="$2"
+  shift 2
+  LC_ALL=C $_RULES_SHELL_RUNFILES_AWK "$_rf_aw_prog" "$@" < "$_rf_aw_file"
 }
 
 # Find the first line in $2 whose key is exactly $1 and store the value
@@ -398,7 +401,7 @@ __runfiles_find_line() {
 # The awk search behind __runfiles_find_line.
 __runfiles_find_line_awk() {
   _rf_fl_val=$(__runfiles_awk '
-    BEGIN { k = ARGV[2]; c = ARGV[3]; ARGV[2] = ARGV[3] = ""
+    BEGIN { k = ARGV[1]; c = ARGV[2]; ARGV[1] = ARGV[2] = ""
             n = length(k); if (c) k = tolower(k) }
     { h = substr($0, 1, n); if (c) h = tolower(h)
       if (h == k) { print substr($0, n + 1); f = 1; exit } }
@@ -501,7 +504,7 @@ __runfiles_find_prefix() {
 # as the scan and reports the escaped flag, key and value on three lines.
 __runfiles_find_prefix_awk() {
   _rf_fp_out=$(__runfiles_awk '
-    BEGIN { p = ARGV[2]; e = ARGV[3]; c = ARGV[4]; ARGV[2] = ARGV[3] = ARGV[4] = ""
+    BEGIN { p = ARGV[1]; e = ARGV[2]; c = ARGV[3]; ARGV[1] = ARGV[2] = ARGV[3] = ""
             if (c) p = tolower(p); best = 0 }
     { esc = (substr($0, 1, 1) == " ")
       if (esc && e == "") next
@@ -597,7 +600,7 @@ __runfiles_find_by_target() {
 
   if [ -n "${_RULES_SHELL_RUNFILES_AWK:-}" ]; then
     __runfiles_awk '
-      BEGIN { t = ARGV[2]; c = ARGV[3]; ARGV[2] = ARGV[3] = ""; if (c) t = tolower(t) }
+      BEGIN { t = ARGV[1]; c = ARGV[2]; ARGV[1] = ARGV[2] = ""; if (c) t = tolower(t) }
       substr($0, 1, 1) == " " { next }
       { i = index($0, " "); if (i == 0) next
         v = substr($0, i + 1); if (c) v = tolower(v)
@@ -664,7 +667,7 @@ __runfiles_find_repo_mapping() {
 
   if [ -n "${_RULES_SHELL_RUNFILES_AWK:-}" ]; then
     _rf_rm_out=$(__runfiles_awk '
-      BEGIN { a = ARGV[2]; b = ARGV[3]; c = ARGV[4]; ARGV[2] = ARGV[3] = ARGV[4] = ""
+      BEGIN { a = ARGV[1]; b = ARGV[2]; c = ARGV[3]; ARGV[1] = ARGV[2] = ARGV[3] = ""
               if (c) { a = tolower(a); b = tolower(b) } na = length(a); nb = length(b) }
       { l = c ? tolower($0) : $0
         if (substr(l, 1, na) == a || substr(l, 1, nb) == b) {
@@ -782,45 +785,43 @@ rlocation() {
   esac
 
   if [ -f "${RUNFILES_REPO_MAPPING:-}" ]; then
-    local target_repo_apparent_name="${1%%/*}"
-    local remainder=
+    _rf_rl_target_apparent="${1%%/*}"
+    _rf_rl_remainder=
     case "$1" in
-      */*) remainder="${1#*/}" ;;
+      */*) _rf_rl_remainder="${1#*/}" ;;
     esac
-    if [ -n "$remainder" ]; then
-      local source_repo=""
+    if [ -n "$_rf_rl_remainder" ]; then
+      _rf_rl_source_repo=
       if [ -n "${2+x}" ]; then
-        source_repo="$2"
+        _rf_rl_source_repo="$2"
       elif [ -n "${BASH_VERSION:-}" ]; then
         # Idx 2 walks past runfiles_current_repository and rlocation to the
         # actual caller. `|| true` preserves whatever repo name the
         # parse-exec-path fallback already printed to stdout, mirroring bash's
         # `local -r x=$(...)`, where `local` masks the subshell's exit code.
-        source_repo="$(runfiles_current_repository 2 || true)"
+        _rf_rl_source_repo="$(runfiles_current_repository 2 || true)"
       fi
-      __runfiles_debug "INFO[runfiles.sh]: rlocation($1): looking up canonical name for ($target_repo_apparent_name) from ($source_repo) in ($RUNFILES_REPO_MAPPING)"
-      local source_repo_prefix
-      __runfiles_compute_repo_prefix "$source_repo"
-      source_repo_prefix="$_rf_cp_out"
-      __runfiles_debug "INFO[runfiles.sh]: rlocation($1): matching source_repo ($source_repo) or prefix ($source_repo_prefix) with target ($target_repo_apparent_name)"
-      local target_repo
-      __runfiles_find_repo_mapping "$source_repo" "$source_repo_prefix" "$target_repo_apparent_name" "$RUNFILES_REPO_MAPPING" || true
-      target_repo="$_rf_rm_out"
-      __runfiles_debug "INFO[runfiles.sh]: rlocation($1): canonical name of target repo is ($target_repo)"
-      if [ -n "$target_repo" ]; then
-        local rlocation_path="$target_repo/$remainder"
+      __runfiles_debug "INFO[runfiles.sh]: rlocation($1): looking up canonical name for ($_rf_rl_target_apparent) from ($_rf_rl_source_repo) in ($RUNFILES_REPO_MAPPING)"
+      __runfiles_compute_repo_prefix "$_rf_rl_source_repo"
+      _rf_rl_source_prefix="$_rf_cp_out"
+      __runfiles_debug "INFO[runfiles.sh]: rlocation($1): matching source_repo ($_rf_rl_source_repo) or prefix ($_rf_rl_source_prefix) with target ($_rf_rl_target_apparent)"
+      __runfiles_find_repo_mapping "$_rf_rl_source_repo" "$_rf_rl_source_prefix" "$_rf_rl_target_apparent" "$RUNFILES_REPO_MAPPING" || true
+      _rf_rl_target_repo="$_rf_rm_out"
+      __runfiles_debug "INFO[runfiles.sh]: rlocation($1): canonical name of target repo is ($_rf_rl_target_repo)"
+      if [ -n "$_rf_rl_target_repo" ]; then
+        _rf_rl_path="$_rf_rl_target_repo/$_rf_rl_remainder"
       else
-        local rlocation_path="$1"
+        _rf_rl_path="$1"
       fi
     else
-      local rlocation_path="$1"
+      _rf_rl_path="$1"
     fi
   else
     __runfiles_debug "INFO[runfiles.sh]: rlocation($1): not using repository mapping (${RUNFILES_REPO_MAPPING:-}) since it does not exist"
-    local rlocation_path="$1"
+    _rf_rl_path="$1"
   fi
 
-  runfiles_rlocation_checked "$rlocation_path"
+  runfiles_rlocation_checked "$_rf_rl_path"
 }
 
 # Exports the environment variables that subprocesses need in order to use
@@ -898,21 +899,21 @@ __runfiles_print_exec_path_repository() {
 # Note: This function only works correctly with Bzlmod enabled. Without
 # Bzlmod, its return value is ignored if passed to rlocation.
 runfiles_current_repository() {
-  local raw_caller_path=
-  local _rf_arg="${1:-}"
+  _rf_cr_raw=
+  _rf_arg="${1:-}"
   # Non-numeric arg: caller passed a script path (POSIX calling convention).
   # Accepted under both bash and POSIX so portable scripts work.
   case "$_rf_arg" in
-    *[!0123456789]*) raw_caller_path="$_rf_arg" ;;
+    *[!0123456789]*) _rf_cr_raw="$_rf_arg" ;;
   esac
-  if [ -z "$raw_caller_path" ]; then
+  if [ -z "$_rf_cr_raw" ]; then
     if [ -n "${BASH_VERSION:-}" ]; then
       # Empty arg defaults to idx=1 (bash convention, N-th caller).
       # BASH_SOURCE array indexing is bash-only syntax; hide it from POSIX
       # shells via eval so parsing succeeds. `:-` guards against out-of-bounds
       # indices under `set -u`.
-      eval 'raw_caller_path="${BASH_SOURCE[${_rf_arg:-1}]:-}"'
-      if [ -z "$raw_caller_path" ]; then
+      eval '_rf_cr_raw="${BASH_SOURCE[${_rf_arg:-1}]:-}"'
+      if [ -z "$_rf_cr_raw" ]; then
         __runfiles_debug "ERROR[runfiles.sh]: runfiles_current_repository: no caller" \
           "path resolvable from BASH_SOURCE (idx=${_rf_arg:-1} out of range)"
         return 1
@@ -929,84 +930,80 @@ runfiles_current_repository() {
       return 1
     fi
   fi
-  if __runfiles_is_abs "$raw_caller_path"; then
-    local caller_path="$raw_caller_path"
+  if __runfiles_is_abs "$_rf_cr_raw"; then
+    _rf_cr_caller="$_rf_cr_raw"
   else
     # dirname/basename without external binaries
-    local _rf_dir _rf_base
-    case "$raw_caller_path" in
-      */*) _rf_dir="${raw_caller_path%/*}"; [ -z "$_rf_dir" ] && _rf_dir="/" ;;
+    case "$_rf_cr_raw" in
+      */*) _rf_dir="${_rf_cr_raw%/*}"; [ -z "$_rf_dir" ] && _rf_dir="/" ;;
       *)   _rf_dir="." ;;
     esac
-    _rf_base="${raw_caller_path##*/}"
-    local caller_path
-    caller_path="$(cd "$_rf_dir" || return 1; pwd)/$_rf_base"
+    _rf_base="${_rf_cr_raw##*/}"
+    _rf_cr_caller="$(cd "$_rf_dir" || return 1; pwd)/$_rf_base"
   fi
-  __runfiles_debug "INFO[runfiles.sh]: runfiles_current_repository(${1:-}): caller's path is ($caller_path)"
+  __runfiles_debug "INFO[runfiles.sh]: runfiles_current_repository(${1:-}): caller's path is ($_rf_cr_caller)"
 
-  local rlocation_path=
+  _rf_cr_path=
 
   # If the runfiles manifest exists, search for an entry with target the
   # caller's path.
   if [ -f "${RUNFILES_MANIFEST_FILE:-/dev/null}" ]; then
-    local normalized_caller_path
-    normalized_caller_path="$(__runfiles_normalize_backslashes "$caller_path")"
-    local escaped_caller_path="$normalized_caller_path"
-    rlocation_path="$(__runfiles_find_by_target "$escaped_caller_path" "$RUNFILES_MANIFEST_FILE")" || true
-    if [ -z "$rlocation_path" ]; then
-      __runfiles_debug "ERROR[runfiles.sh]: runfiles_current_repository(${1:-}): ($normalized_caller_path) is not the target of an entry in the runfiles manifest ($RUNFILES_MANIFEST_FILE)"
-      __runfiles_print_exec_path_repository "$normalized_caller_path" "${1:-}"
+    _rf_cr_norm="$(__runfiles_normalize_backslashes "$_rf_cr_caller")"
+    _rf_cr_escaped="$_rf_cr_norm"
+    _rf_cr_path="$(__runfiles_find_by_target "$_rf_cr_escaped" "$RUNFILES_MANIFEST_FILE")" || true
+    if [ -z "$_rf_cr_path" ]; then
+      __runfiles_debug "ERROR[runfiles.sh]: runfiles_current_repository(${1:-}): ($_rf_cr_norm) is not the target of an entry in the runfiles manifest ($RUNFILES_MANIFEST_FILE)"
+      __runfiles_print_exec_path_repository "$_rf_cr_norm" "${1:-}"
       return 1
     else
-      __runfiles_debug "INFO[runfiles.sh]: runfiles_current_repository(${1:-}): ($normalized_caller_path) is the target of ($rlocation_path) in the runfiles manifest"
+      __runfiles_debug "INFO[runfiles.sh]: runfiles_current_repository(${1:-}): ($_rf_cr_norm) is the target of ($_rf_cr_path) in the runfiles manifest"
     fi
   fi
 
   # If the runfiles directory exists, check if the caller's path is of the
-  # form $RUNFILES_DIR/rlocation_path and if so, set $rlocation_path.
-  if [ -z "$rlocation_path" ] && [ -d "${RUNFILES_DIR:-/dev/null}" ]; then
-    local normalized_caller_path normalized_dir
-    normalized_caller_path="$(__runfiles_normalize_backslashes "$caller_path")"
-    local _rf_rd="${RUNFILES_DIR%/}"
+  # form $RUNFILES_DIR/rlocation_path and if so, set $_rf_cr_path.
+  if [ -z "$_rf_cr_path" ] && [ -d "${RUNFILES_DIR:-/dev/null}" ]; then
+    _rf_cr_norm="$(__runfiles_normalize_backslashes "$_rf_cr_caller")"
+    _rf_rd="${RUNFILES_DIR%/}"
     _rf_rd="${_rf_rd%\\}"
-    normalized_dir="$(__runfiles_normalize_backslashes "$_rf_rd")"
+    _rf_cr_norm_dir="$(__runfiles_normalize_backslashes "$_rf_rd")"
     if [ -n "$_RLOCATION_CASE_INSENSITIVE" ]; then
-      __runfiles_tolower "$normalized_caller_path"
-      normalized_caller_path="$_rf_tl_out"
-      __runfiles_tolower "$normalized_dir"
-      normalized_dir="$_rf_tl_out"
+      __runfiles_tolower "$_rf_cr_norm"
+      _rf_cr_norm="$_rf_tl_out"
+      __runfiles_tolower "$_rf_cr_norm_dir"
+      _rf_cr_norm_dir="$_rf_tl_out"
     fi
-    case "$normalized_caller_path" in
-      "$normalized_dir"/*)
-        rlocation_path="${normalized_caller_path#"$normalized_dir"}"
-        rlocation_path="${rlocation_path#/}"
+    case "$_rf_cr_norm" in
+      "$_rf_cr_norm_dir"/*)
+        _rf_cr_path="${_rf_cr_norm#"$_rf_cr_norm_dir"}"
+        _rf_cr_path="${_rf_cr_path#/}"
         ;;
     esac
-    if [ -z "$rlocation_path" ]; then
-      __runfiles_debug "INFO[runfiles.sh]: runfiles_current_repository(${1:-}): ($normalized_caller_path) does not lie under the runfiles directory ($normalized_dir)"
-      __runfiles_print_exec_path_repository "$normalized_caller_path" "${1:-}"
+    if [ -z "$_rf_cr_path" ]; then
+      __runfiles_debug "INFO[runfiles.sh]: runfiles_current_repository(${1:-}): ($_rf_cr_norm) does not lie under the runfiles directory ($_rf_cr_norm_dir)"
+      __runfiles_print_exec_path_repository "$_rf_cr_norm" "${1:-}"
       return 0
     else
-      __runfiles_debug "INFO[runfiles.sh]: runfiles_current_repository(${1:-}): ($caller_path) has path ($rlocation_path) relative to the runfiles directory ($RUNFILES_DIR)"
+      __runfiles_debug "INFO[runfiles.sh]: runfiles_current_repository(${1:-}): ($_rf_cr_caller) has path ($_rf_cr_path) relative to the runfiles directory ($RUNFILES_DIR)"
     fi
   fi
 
-  if [ -z "$rlocation_path" ]; then
-    __runfiles_debug "ERROR[runfiles.sh]: runfiles_current_repository(${1:-}): cannot determine repository for ($caller_path) since neither the runfiles directory (${RUNFILES_DIR:-}) nor the runfiles manifest (${RUNFILES_MANIFEST_FILE:-}) exist"
+  if [ -z "$_rf_cr_path" ]; then
+    __runfiles_debug "ERROR[runfiles.sh]: runfiles_current_repository(${1:-}): cannot determine repository for ($_rf_cr_caller) since neither the runfiles directory (${RUNFILES_DIR:-}) nor the runfiles manifest (${RUNFILES_MANIFEST_FILE:-}) exist"
     return 1
   fi
 
-  __runfiles_debug "INFO[runfiles.sh]: runfiles_current_repository(${1:-}): ($caller_path) corresponds to rlocation path ($rlocation_path)"
+  __runfiles_debug "INFO[runfiles.sh]: runfiles_current_repository(${1:-}): ($_rf_cr_caller) corresponds to rlocation path ($_rf_cr_path)"
   # Normalize the rlocation path to be of the form repo/pkg/file.
-  rlocation_path="${rlocation_path#_main/external/}"
-  rlocation_path="${rlocation_path#_main/../}"
-  local repository="${rlocation_path%%/*}"
-  if [ "$repository" = "_main" ]; then
-    __runfiles_debug "INFO[runfiles.sh]: runfiles_current_repository(${1:-}): ($rlocation_path) lies in the main repository"
+  _rf_cr_path="${_rf_cr_path#_main/external/}"
+  _rf_cr_path="${_rf_cr_path#_main/../}"
+  _rf_cr_repo="${_rf_cr_path%%/*}"
+  if [ "$_rf_cr_repo" = "_main" ]; then
+    __runfiles_debug "INFO[runfiles.sh]: runfiles_current_repository(${1:-}): ($_rf_cr_path) lies in the main repository"
     printf '%s\n' ""
   else
-    __runfiles_debug "INFO[runfiles.sh]: runfiles_current_repository(${1:-}): ($rlocation_path) lies in repository ($repository)"
-    printf '%s\n' "$repository"
+    __runfiles_debug "INFO[runfiles.sh]: runfiles_current_repository(${1:-}): ($_rf_cr_path) lies in repository ($_rf_cr_repo)"
+    printf '%s\n' "$_rf_cr_repo"
   fi
 }
 
@@ -1080,8 +1077,8 @@ runfiles_rlocation_checked() {
   #  behavior is not consistent across platforms.
   # The optional second argument is the current lookup depth, which only
   # differs from zero while following the target of an unresolved symlink.
-  local depth="${2:-0}"
-  if [ "$depth" -gt 32 ]; then
+  _rf_rc_depth="${2:-0}"
+  if [ "$_rf_rc_depth" -gt 32 ]; then
     __runfiles_debug "ERROR[runfiles.sh]: rlocation($1): too many levels of symbolic links"
     printf '%s\n' ""
     return 0
@@ -1096,7 +1093,7 @@ runfiles_rlocation_checked() {
     # If the rlocation path contains a space or newline, it is stored in the
     # manifest prefixed with a space and with spaces, newlines and backslashes
     # escaped as \s, \n and \b.
-    local search_key escaped suffix
+    _rf_rc_key=; _rf_rc_escaped=; _rf_rc_suffix=
     case "$1" in
       *" "*|*"$_RULES_SHELL_RUNFILES_NL"*)
         # Backslashes first, so that the ones the other two escapes introduce
@@ -1104,13 +1101,13 @@ runfiles_rlocation_checked() {
         __runfiles_gsub "$1" '\' '\b'
         __runfiles_gsub "$_rf_gs_out" ' ' '\s'
         __runfiles_gsub "$_rf_gs_out" "$_RULES_SHELL_RUNFILES_NL" '\n'
-        search_key="$_rf_gs_out"
-        escaped=1
-        __runfiles_debug "INFO[runfiles.sh]: rlocation($1): using escaped search key ($search_key)"
+        _rf_rc_key="$_rf_gs_out"
+        _rf_rc_escaped=1
+        __runfiles_debug "INFO[runfiles.sh]: rlocation($1): using escaped search key ($_rf_rc_key)"
         ;;
       *)
-        search_key="$1"
-        escaped=
+        _rf_rc_key="$1"
+        _rf_rc_escaped=
         ;;
     esac
 
@@ -1119,28 +1116,28 @@ runfiles_rlocation_checked() {
     #
     # An entry with an empty value counts as absent, hence the test on
     # _rf_fl_val rather than on the exit status.
-    local result=
-    if __runfiles_find_line "${escaped:+ }$search_key" "$RUNFILES_MANIFEST_FILE" &&
+    _rf_rc_result=
+    if __runfiles_find_line "${_rf_rc_escaped:+ }$_rf_rc_key" "$RUNFILES_MANIFEST_FILE" &&
       [ -n "$_rf_fl_val" ]; then
-      result="$_rf_fl_val"
-      suffix=
+      _rf_rc_result="$_rf_fl_val"
+      _rf_rc_suffix=
     elif [ "${1%/*}" != "$1" ] &&
-      __runfiles_find_prefix "$1" "$RUNFILES_MANIFEST_FILE" "$search_key" "$escaped"; then
+      __runfiles_find_prefix "$1" "$RUNFILES_MANIFEST_FILE" "$_rf_rc_key" "$_rf_rc_escaped"; then
       # $1 is not listed, but it may lie under a directory that is. One extra
       # scan resolves every path prefix at once; a path without a separator
       # skips the walk entirely, as the _repo_mapping lookup does.
-      result="$_rf_fp_val"
-      escaped="$_rf_fp_esc"
-      suffix="$_rf_fp_suffix"
+      _rf_rc_result="$_rf_fp_val"
+      _rf_rc_escaped="$_rf_fp_esc"
+      _rf_rc_suffix="$_rf_fp_suffix"
     else
       __runfiles_debug "INFO[runfiles.sh]: rlocation($1): not found in manifest"
       printf '%s\n' ""
       return 0
     fi
-    if [ -n "$escaped" ]; then
-      __runfiles_gsub "$result" '\n' "$_RULES_SHELL_RUNFILES_NL"
+    if [ -n "$_rf_rc_escaped" ]; then
+      __runfiles_gsub "$_rf_rc_result" '\n' "$_RULES_SHELL_RUNFILES_NL"
       __runfiles_gsub "$_rf_gs_out" '\b' '\'
-      result="$_rf_gs_out"
+      _rf_rc_result="$_rf_gs_out"
     fi
     # When a hit that came from a path prefix does not resolve, there is
     # deliberately no retry with a shorter one, for two reasons:
@@ -1150,7 +1147,7 @@ runfiles_rlocation_checked() {
     #    existence and would have returned the non-existent path. It seems
     #    better to return no path rather than a potentially different,
     #    non-empty path.
-    __runfiles_resolve_manifest_target "${1%"$suffix"}" "$result" "$suffix" "$depth"
+    __runfiles_resolve_manifest_target "${1%"$_rf_rc_suffix"}" "$_rf_rc_result" "$_rf_rc_suffix" "$_rf_rc_depth"
   elif [ -e "${RUNFILES_DIR:-/dev/null}/$1" ]; then
     __runfiles_debug "INFO[runfiles.sh]: rlocation($1): found under RUNFILES_DIR ($RUNFILES_DIR), return"
     printf '%s\n' "${RUNFILES_DIR}/$1"

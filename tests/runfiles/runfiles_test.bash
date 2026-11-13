@@ -841,6 +841,32 @@ function test_runfiles_bash_init_aborts_when_library_fails() {
   [[ "$output" != *reached* ]] || fail "expected the script not to run past the snippet"
 }
 
+# awk takes an operand of the form name=value as an assignment, so the v4
+# snippet has to reach a manifest with such a path some other way.
+function test_runfiles_bash_manifest_path_with_equals_sign() {
+  if [[ "$_RUNFILES_LIBRARY_FILE" != *runfiles.bash ]]; then
+    return 0
+  fi
+  local tmpdir="$(mktemp -d $TEST_TMPDIR/tmp.XXXXXXXX)"
+  local lib_dir="$tmpdir/lib/bazel_tools/tools/bash/runfiles"
+  mkdir -p "$lib_dir"
+  cp "$runfiles_lib_path" "$lib_dir/runfiles.bash"
+  cp "$(dirname "$runfiles_lib_path")/runfiles.sh" "$lib_dir/runfiles.sh"
+  touch "$tmpdir/f"
+  printf 'r/f %s\nbazel_tools/tools/bash/runfiles/runfiles.bash %s\n' "$tmpdir/f" \
+    "$lib_dir/runfiles.bash" > "$tmpdir/out=1.manifest"
+  {
+    echo '#!/usr/bin/env bash'
+    sed -n '/^# *# --- begin runfiles.bash initialization v4 ---/,/^# *# --- end runfiles.bash initialization v4 ---/p' \
+      "$runfiles_lib_path" | sed 's/^#       //'
+    echo 'rlocation r/f'
+  } > "$tmpdir/script.sh"
+
+  local actual
+  actual=$(RUNFILES_DIR= RUNFILES_MANIFEST_FILE="$tmpdir/out=1.manifest" "$BASH" "$tmpdir/script.sh")
+  [[ "$actual" == "$tmpdir/f" ]] || fail "expected the snippet to find the library through out=1.manifest, got: $actual"
+}
+
 function test_with_grep_env_vars_set() {
   # These influence how grep behaves.
   export GREP_COLOR='1;35;40'
