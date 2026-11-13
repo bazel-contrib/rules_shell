@@ -20,6 +20,36 @@ visibility(["//shell"])
 
 _SH_TOOLCHAIN_TYPE = Label("//shell:toolchain_type")
 
+# The root symlink under which //shell/runfiles installs runfiles.bash; see
+# shell/runfiles/README.md.
+_RUNFILES_INIT_PATH = "bazel_tools/tools/bash/runfiles/runfiles.bash"
+
+# The launcher for `use_bash_launcher = True`: the v4 initialization snippet of
+# runfiles.bash, after which the runfiles variables and functions are exported
+# and the script exec'd.
+_LAUNCHER_TEMPLATE = """\
+{shebang}
+
+# --- begin runfiles.bash initialization v4 ---
+set -uo pipefail; set +e; f={init_path}; _rf_p=; _rf_a=
+if [ -n "${{AWK:-}}" ] || [ "${{RULES_SHELL_RUNFILES_USE_AWK:-}}" != 0 ]; then _rf_a=1; fi
+_rf_d() {{ [ -f "$1/$f" ] && _rf_p="$1/$f"; }}
+_rf_m() {{ [ -f "$1" ] || return 1; if [ -n "$_rf_a" ]; then \
+  _rf_p=$(${{AWK:-awk}} -v k="$f " 'index($0,k)==1{{print substr($0,length(k)+1);m=1;exit}}END{{exit !m}}' < "$1" 2>/dev/null); case $? in 0) return;; 1) return 1;; esac; fi; \
+  while IFS= read -r _rf_l || [ -n "$_rf_l" ]; do \
+  case "$_rf_l" in "$f "*) _rf_p="${{_rf_l#"$f "}}"; return;; esac; done < "$1"; return 1; }}
+_rf_d "${{RUNFILES_DIR:-/dev/null}}" || _rf_m "${{RUNFILES_MANIFEST_FILE:-/dev/null}}" || \
+  _rf_d "$0.runfiles" || _rf_m "$0.runfiles_manifest" || _rf_m "$0.exe.runfiles_manifest" || \
+  {{ echo>&2 "ERROR: cannot find $f"; exit 1; }}
+# shellcheck disable=SC1090
+. "$_rf_p" || {{ echo>&2 "ERROR: cannot source $_rf_p"; exit 1; }}; f=; unset -f _rf_d _rf_m; unset _rf_l _rf_p _rf_a; set -e
+# --- end runfiles.bash initialization v4 ---
+
+runfiles_export_envvars
+
+exec "$(rlocation "{src}")" "$@"
+"""
+
 def _to_rlocation_path(ctx, file):
     if file.short_path.startswith("../"):
         return file.short_path[3:]
@@ -51,24 +81,9 @@ def _sh_executable_impl(ctx):
             shebang = "#!{}".format(shell)
         ctx.actions.write(
             entrypoint,
-            content = """{shebang}
-
-# --- begin runfiles.bash initialization v3 ---
-set -uo pipefail; set +e; f=bazel_tools/tools/bash/runfiles/runfiles.bash
-# shellcheck disable=SC1090
-source "${{RUNFILES_DIR:-/dev/null}}/$f" 2>/dev/null || \
-  source "$(grep -sm1 "^$f " "${{RUNFILES_MANIFEST_FILE:-/dev/null}}" | cut -f2- -d' ')" 2>/dev/null || \
-  source "$0.runfiles/$f" 2>/dev/null || \
-  source "$(grep -sm1 "^$f " "$0.runfiles_manifest" | cut -f2- -d' ')" 2>/dev/null || \
-  source "$(grep -sm1 "^$f " "$0.exe.runfiles_manifest" | cut -f2- -d' ')" 2>/dev/null || \
-  {{ echo>&2 "ERROR: cannot find $f"; exit 1; }}; f=; set -e
-# --- end runfiles.bash initialization v3 ---
-
-runfiles_export_envvars
-
-exec "$(rlocation "{src}")" "$@"
-""".format(
+            content = _LAUNCHER_TEMPLATE.format(
                 shebang = shebang,
+                init_path = _RUNFILES_INIT_PATH,
                 src = _to_rlocation_path(ctx, src),
             ),
             is_executable = True,

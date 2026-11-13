@@ -5,7 +5,9 @@ buildifier: 8.2.1
 matrix:
   platform:
     - ubuntu2004
+    - ubuntu2004_arm64
     - macos
+    - macos_arm64
     - windows
   legacy_bazel:
     - 7.*
@@ -62,3 +64,22 @@ tasks:
       - "//tests/..."
     test_targets:
       - "//tests/..."
+  test_posix_shell_runfiles:
+    # Dash coverage for the POSIX shell runfiles library. The suite runs under
+    # its own `#!/bin/sh`, which is dash on this image, not under the
+    # sh_toolchain, so no toolchain flag is involved. Local repro on a
+    # Debian-based host: bazel test //tests/runfiles:runfiles_sh_test
+    name: "POSIX Runfiles (dash, ${{modern_bazel}})"
+    bazel: ${{ modern_bazel }}
+    platform: ubuntu2004
+    shell_commands:
+      - "/bin/dash -c 'echo dash ready'"
+    build_targets:
+      - "//tests/runfiles:runfiles_sh_test"
+      - "//tests/runfiles:runfiles_sh_no_awk_test"
+    test_flags:
+      # Fail rather than pass under bash if /bin/sh on the CI image ever changes.
+      - "--test_env=RUNFILES_TEST_REQUIRE_POSIX_SH=1"
+    test_targets:
+      - "//tests/runfiles:runfiles_sh_test"
+      - "//tests/runfiles:runfiles_sh_no_awk_test"
