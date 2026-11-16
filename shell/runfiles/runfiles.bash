@@ -98,9 +98,6 @@
 #       . "$_rf_p" || { echo>&2 "ERROR: cannot source $_rf_p"; exit 1; }; f=; unset -f _rf_d _rf_m; unset _rf_l _rf_p _rf_a; set -e
 #       # --- end runfiles.bash initialization v4 ---
 #
-#     `_rf_d` checks a runfiles directory and `_rf_m` searches a manifest, with
-#     awk unless RULES_SHELL_RUNFILES_USE_AWK=0 and a shell loop otherwise, so
-#     that only an existing file is sourced. The v3 snippet keeps working.
 #
 # 3.  Use rlocation to look up runfile paths.
 #
