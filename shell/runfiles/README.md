@@ -14,7 +14,9 @@ exported with `export -f`, which is how the `use_bash_launcher` launcher makes
 them available to a script without a snippet. Under any other shell neither is
 possible: `runfiles_current_repository` needs the caller's script path as its
 argument, `rlocation` without a second argument assumes the main repository,
-and every script sources the library itself.
+and every script sources the library itself, including one started by the
+launcher, which under such a shell only hands over `RUNFILES_DIR` and
+`RUNFILES_MANIFEST_FILE`.
 
 ## What a lookup costs
 
