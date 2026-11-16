@@ -1,10 +1,85 @@
 load("@rules_shellcheck//:def.bzl", "shellcheck_test")
+load("//shell:sh_binary.bzl", "sh_binary")
 load("//shell:sh_test.bzl", "sh_test")
 
+# The bash suite against the library as every bash script sees it: through
+# `//shell/runfiles` and the legacy `bazel_tools/tools/bash/runfiles/runfiles.bash`
+# path, where runfiles.bash wraps runfiles.sh with awk enabled.
 sh_test(
-    name = "runfiles_test",
+    name = "runfiles_bash_test",
     srcs = ["runfiles_test.bash"],
     deps = ["//shell/runfiles"],
+)
+
+# The same with awk switched off, so that the shell loops are what the bash
+# suite exercises through the legacy path.
+sh_test(
+    name = "runfiles_bash_no_awk_test",
+    srcs = ["runfiles_test.bash"],
+    env = {"RULES_SHELL_RUNFILES_USE_AWK": "0"},
+    deps = ["//shell/runfiles"],
+)
+
+sh_test(
+    name = "runfiles_sh_from_bash_test",
+    srcs = ["runfiles_test.bash"],
+    # RUNFILES_LIBRARY_FILE is read by runfiles_test.bash's find_runfiles_lib
+    # helper to locate the library under test. Adding the target to `data` so
+    # $(rlocationpath ...) resolves (only `data` is passed to
+    # ctx.expand_location in sh_executable.bzl).
+    data = ["//shell/runfiles:runfiles_sh"],
+    env = {
+        "RUNFILES_LIBRARY_FILE": "$(rlocationpath //shell/runfiles:runfiles_sh)",
+    },
+    deps = ["//shell/runfiles:runfiles_sh"],
+)
+
+sh_test(
+    name = "runfiles_sh_test",
+    srcs = ["runfiles_test.sh"],
+    # Pass the rlocation path of runfiles.sh so the test can find it without
+    # hardcoding the main-repo prefix (which differs between Bzlmod `_main/`
+    # and WORKSPACE `rules_shell/`).
+    data = ["//shell/runfiles:runfiles_sh"],
+    # The suite runs under whatever `#!/bin/sh` resolves to: dash on Debian and
+    # Ubuntu, bash elsewhere. The `test_posix_shell_runfiles` presubmit task
+    # guarantees dash coverage by setting RUNFILES_TEST_REQUIRE_POSIX_SH, and
+    # `runfiles_sh_under_bash_test` covers bash on Linux.
+    env = {
+        "RUNFILES_LIBRARY_FILE": "$(rlocationpath //shell/runfiles:runfiles_sh)",
+    },
+    deps = ["//shell/runfiles:runfiles_sh"],
+)
+
+sh_test(
+    name = "runfiles_sh_no_awk_test",
+    srcs = ["runfiles_test.sh"],
+    data = ["//shell/runfiles:runfiles_sh"],
+    # The same suite with manifests searched by shell loops instead of awk.
+    env = {
+        "RUNFILES_LIBRARY_FILE": "$(rlocationpath //shell/runfiles:runfiles_sh)",
+        "RULES_SHELL_RUNFILES_USE_AWK": "0",
+    },
+    deps = ["//shell/runfiles:runfiles_sh"],
+)
+
+sh_test(
+    name = "runfiles_sh_under_bash_test",
+    srcs = ["runfiles_test_under_bash.sh"],
+    data = [
+        "runfiles_test.sh",
+        "//shell/runfiles:runfiles_sh",
+    ],
+    env = {
+        "RUNFILES_LIBRARY_FILE": "$(rlocationpath //shell/runfiles:runfiles_sh)",
+    },
+    # bash is what the default sh_toolchain resolves to, so this is the
+    # configuration most users run; see runfiles_test_under_bash.sh.
+    target_compatible_with = select({
+        "@platforms//os:linux": [],
+        "//conditions:default": ["@platforms//:incompatible"],
+    }),
+    deps = ["//shell/runfiles:runfiles_sh"],
 )
 
 shellcheck_test(
@@ -14,6 +89,70 @@ shellcheck_test(
     severity = "warning",
     # Fails on Windows with:
     # '..' is not recognized as an internal or external command, operable program or batch file.
+    target_compatible_with = select({
+        "@platforms//os:windows": ["@platforms//:incompatible"],
+        "//conditions:default": [],
+    }),
+)
+
+shellcheck_test(
+    name = "runfiles_sh_shellcheck_test",
+    data = ["//shell/runfiles:runfiles.sh"],
+    format = "gcc",
+    severity = "warning",
+    # Fails on Windows with:
+    # '..' is not recognized as an internal or external command, operable program or batch file.
+    target_compatible_with = select({
+        "@platforms//os:windows": ["@platforms//:incompatible"],
+        "//conditions:default": [],
+    }),
+)
+
+# The POSIX suite is linted as sh so that bashisms like `local` do not creep
+# in: dash and bash both accept them, so the suite itself would not notice.
+shellcheck_test(
+    name = "runfiles_test_sh_shellcheck_test",
+    data = ["runfiles_test.sh"],
+    format = "gcc",
+    severity = "warning",
+    target_compatible_with = select({
+        "@platforms//os:windows": ["@platforms//:incompatible"],
+        "//conditions:default": [],
+    }),
+)
+
+shellcheck_test(
+    name = "runfiles_test_under_bash_shellcheck_test",
+    data = ["runfiles_test_under_bash.sh"],
+    format = "gcc",
+    severity = "warning",
+    target_compatible_with = select({
+        "@platforms//os:windows": ["@platforms//:incompatible"],
+        "//conditions:default": [],
+    }),
+)
+
+# Produces the measurement table in shell/runfiles/README.md; see the script
+# for its arguments.
+sh_binary(
+    name = "benchmark",
+    srcs = ["benchmark.sh"],
+    data = [
+        "//shell/runfiles:runfiles.bash",
+        "//shell/runfiles:runfiles.sh",
+    ],
+    env = {
+        "RUNFILES_BASH": "$(rlocationpath //shell/runfiles:runfiles.bash)",
+        "RUNFILES_SH": "$(rlocationpath //shell/runfiles:runfiles.sh)",
+    },
+    tags = ["manual"],
+)
+
+shellcheck_test(
+    name = "benchmark_shellcheck_test",
+    data = ["benchmark.sh"],
+    format = "gcc",
+    severity = "warning",
     target_compatible_with = select({
         "@platforms//os:windows": ["@platforms//:incompatible"],
         "//conditions:default": [],
