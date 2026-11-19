@@ -1,1 +1,2 @@
 tests/bcr
+tests/genrule/external_repo

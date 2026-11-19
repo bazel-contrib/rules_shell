@@ -19,6 +19,7 @@ toolchain_type(
 
 exports_files(
     [
+        "genrule.bzl",
         "repositories.bzl",
         "sh_binary.bzl",
         "sh_binary_info.bzl",
@@ -32,6 +33,7 @@ exports_files(
 bzl_library(
     name = "rules_bzl",
     srcs = [
+        "genrule.bzl",
         "repositories.bzl",
         "sh_binary.bzl",
         "sh_binary_info.bzl",
