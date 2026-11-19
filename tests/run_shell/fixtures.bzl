@@ -1,9 +1,12 @@
-"""Rules under test that exercise `ctx.actions.run_shell`."""
+"""Rules under test that exercise the `run_shell` function."""
+
+load("//shell:run_shell.bzl", "run_shell")
 
 def _command_string_impl(ctx):
     out_a = ctx.actions.declare_file(ctx.label.name + "_a.txt")
     out_b = ctx.actions.declare_file(ctx.label.name + "_b.img")
-    ctx.actions.run_shell(
+    run_shell(
+        ctx,
         inputs = ctx.files.srcs,
         outputs = [out_a, out_b],
         arguments = ["--a", "--b"],
@@ -21,7 +24,8 @@ command_string = rule(
 
 def _command_no_arguments_impl(ctx):
     out = ctx.actions.declare_file(ctx.label.name + ".out")
-    ctx.actions.run_shell(
+    run_shell(
+        ctx,
         outputs = [out],
         command = "echo foo123 > " + out.path,
     )
@@ -34,7 +38,8 @@ command_no_arguments = rule(
 
 def _command_with_tools_impl(ctx):
     out = ctx.actions.declare_file(ctx.label.name + ".out")
-    ctx.actions.run_shell(
+    run_shell(
+        ctx,
         inputs = ctx.files.tool if ctx.attr.tool_in_inputs else [],
         tools = ctx.files.tool,
         outputs = [out],
@@ -52,7 +57,8 @@ command_with_tools = rule(
 
 def _command_list_impl(ctx):
     out = ctx.actions.declare_file(ctx.label.name + ".out")
-    ctx.actions.run_shell(
+    run_shell(
+        ctx,
         outputs = [out],
         mnemonic = "DummyMnemonic",
         command = ["dummy_command", "--arg1", "--arg2"],
@@ -66,7 +72,8 @@ command_list = rule(
 
 def _invalid_mnemonic_impl(ctx):
     out = ctx.actions.declare_file(ctx.label.name + ".out")
-    ctx.actions.run_shell(
+    run_shell(
+        ctx,
         outputs = [out],
         command = "false",
         mnemonic = "@@@",
@@ -82,7 +89,8 @@ def _lazy_args_impl(ctx):
     out = ctx.actions.declare_file(ctx.label.name + ".out")
     args = ctx.actions.args()
     args.add("--foo")
-    ctx.actions.run_shell(
+    run_shell(
+        ctx,
         outputs = [out],
         arguments = [args],
         mnemonic = "DummyMnemonic",
@@ -100,7 +108,8 @@ def _long_command_impl(ctx):
     long_command = "( %s ; ) > $1" % " ; ".join(
         ["echo xxx%d" % i for i in range(0, 7000)],
     )
-    ctx.actions.run_shell(
+    run_shell(
+        ctx,
         outputs = [out],
         command = long_command,
         mnemonic = "LongMnemonic",
@@ -121,7 +130,8 @@ def _medium_command_impl(ctx):
     medium_command = "( %s ; ) > $1" % " ; ".join(
         ["echo zzz%d" % i for i in range(0, 1000)],
     )
-    ctx.actions.run_shell(
+    run_shell(
+        ctx,
         outputs = [out],
         command = medium_command,
         mnemonic = "MediumMnemonic",
@@ -143,13 +153,15 @@ def _two_long_commands_impl(ctx):
     command2 = "( %s ; ) > $1" % " ; ".join(
         ["echo yyy%d" % i for i in range(0, 7000)],
     )
-    ctx.actions.run_shell(
+    run_shell(
+        ctx,
         outputs = [out1],
         command = command1,
         mnemonic = "Mnemonic1",
         arguments = [out1.path],
     )
-    ctx.actions.run_shell(
+    run_shell(
+        ctx,
         outputs = [out2],
         command = command2,
         mnemonic = "Mnemonic2",
@@ -160,4 +172,145 @@ def _two_long_commands_impl(ctx):
 two_long_commands = rule(
     implementation = _two_long_commands_impl,
     attrs = {},
+)
+
+def _command_in_exec_group_impl(ctx):
+    out = ctx.actions.declare_file(ctx.label.name + ".out")
+
+    # Like medium_command: long enough to be spilled on Windows, but not on
+    # other platforms.
+    command = "( %s ; ) > $1" % " ; ".join(
+        ["echo zzz%d" % i for i in range(0, 1000)],
+    )
+    run_shell(
+        ctx,
+        outputs = [out],
+        command = command,
+        mnemonic = "ExecGroupMnemonic",
+        arguments = [out.path],
+        exec_group = ctx.attr.use_exec_group or None,
+    )
+    return [DefaultInfo(files = depset([out]))]
+
+command_in_exec_group = rule(
+    implementation = _command_in_exec_group_impl,
+    attrs = {"use_exec_group": attr.string()},
+    exec_groups = {
+        "windows": exec_group(
+            exec_compatible_with = ["@platforms//os:windows"],
+        ),
+    },
+)
+
+def _env_and_execution_requirements_impl(ctx):
+    out = ctx.actions.declare_file(ctx.label.name + ".out")
+    run_shell(
+        ctx,
+        outputs = [out],
+        env = {"a": "b"},
+        execution_requirements = {"timeout": "10", "block-network": "foo"},
+        mnemonic = "DummyMnemonic",
+        command = "dummy_command",
+        progress_message = "dummy_message",
+    )
+    return [DefaultInfo(files = depset([out]))]
+
+env_and_execution_requirements = rule(
+    implementation = _env_and_execution_requirements_impl,
+)
+
+def _lazy_args_with_param_file_impl(ctx):
+    out = ctx.actions.declare_file(ctx.label.name + ".out")
+    args = ctx.actions.args()
+    args.add("--foo")
+    args.use_param_file("--file=%s", use_always = True)
+    run_shell(
+        ctx,
+        outputs = [out],
+        arguments = [args],
+        mnemonic = "DummyMnemonic",
+        command = "touch " + out.path,
+    )
+    return [DefaultInfo(files = depset([out]))]
+
+lazy_args_with_param_file = rule(
+    implementation = _lazy_args_with_param_file_impl,
+)
+
+def _tuple_arguments_impl(ctx):
+    out = ctx.actions.declare_file(ctx.label.name + ".out")
+    args = ctx.actions.args()
+    args.add("--bar")
+    run_shell(
+        ctx,
+        outputs = [out],
+        arguments = ("--foo", args, "--baz"),
+        mnemonic = "DummyMnemonic",
+        command = "dummy_command",
+    )
+    return [DefaultInfo(files = depset([out]))]
+
+tuple_arguments = rule(
+    implementation = _tuple_arguments_impl,
+)
+
+def _string_arguments_impl(ctx):
+    out = ctx.actions.declare_file(ctx.label.name + ".out")
+    run_shell(
+        ctx,
+        outputs = [out],
+        arguments = out.path,
+        mnemonic = "DummyMnemonic",
+        command = "touch $1",
+    )
+    return [DefaultInfo(files = depset([out]))]
+
+string_arguments = rule(
+    implementation = _string_arguments_impl,
+)
+
+def _no_outputs_impl(ctx):
+    run_shell(
+        ctx,
+        outputs = [],
+        mnemonic = "DummyMnemonic",
+        command = "dummy_command",
+    )
+    return []
+
+no_outputs = rule(
+    implementation = _no_outputs_impl,
+)
+
+def _string_outputs_impl(ctx):
+    run_shell(
+        ctx,
+        outputs = ["a", "b"],
+        mnemonic = "DummyMnemonic",
+        command = "dummy_command",
+    )
+    return []
+
+string_outputs = rule(
+    implementation = _string_outputs_impl,
+)
+
+def _resource_set(_os, _inputs_size):
+    return {"cpu": 2, "memory": 64}
+
+def _command_with_resource_set_impl(ctx):
+    out = ctx.actions.declare_file(ctx.label.name + ".out")
+    run_shell(
+        ctx,
+        outputs = [out],
+        command = "echo foo > " + out.path,
+        mnemonic = "ResourceSetMnemonic",
+        # A value of the wrong type verifies that resource_set is forwarded.
+        resource_set = _resource_set if ctx.attr.valid else "not_a_function",
+    )
+    return [DefaultInfo(files = depset([out]))]
+
+command_with_resource_set = rule(
+    implementation = _command_with_resource_set_impl,
+    attrs = {"valid": attr.bool(default = True)},
 )
