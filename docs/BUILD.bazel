@@ -1,6 +1,13 @@
 load("@stardoc//stardoc:stardoc.bzl", "stardoc")
 
 stardoc(
+    name = "genrule",
+    out = "genrule.md",
+    input = "//shell:genrule.bzl",
+    deps = ["//shell:rules_bzl"],
+)
+
+stardoc(
     name = "sh_binary",
     out = "sh_binary.md",
     input = "//shell:sh_binary.bzl",
@@ -52,6 +59,7 @@ stardoc(
 filegroup(
     name = "docs",
     srcs = [
+        ":genrule.md",
         ":repositories.md",
         ":sh_binary.md",
         ":sh_binary_info.md",
